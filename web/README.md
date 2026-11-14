@@ -47,8 +47,9 @@ needs GitHub Enterprise Cloud; Pages from a private repository on other paid pla
 
 ## Team styling
 
-Colours are the variables at the top of `site/assets/app.css` (`--navy`, `--accent`, ...).
-`site/assets/logo.svg` and `favicon.svg` are placeholders: replace them with the team mark.
+Colours are the variables at the top of `site/assets/app.css`. `--navy` (`#000E2F`) is sampled from the team logo.
+`site/assets/logo.png` is the team mark cut out of the square logo image (white on transparent) and
+`favicon.png` is the square logo. A vector (SVG) copy of the logo would be sharper on high-density screens.
 
 ## Adding a visual
 
