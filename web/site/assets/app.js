@@ -583,7 +583,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("#run").onclick = $("#run2").onclick = runSim;
   $("#reset").onclick = () => { S.overrides[S.car] = {}; render(); pending(); };
   try { S.meta = await getJSON("data/meta.json"); } catch (e) { /* optional */ }
-  $("#buildinfo").textContent = S.meta.built ? `Built ${S.meta.built}${S.meta.commit ? " · " + S.meta.commit : ""}` : "";
+  $("#buildinfo").textContent = "© Haley Harper" + (S.meta.built ? `, Built ${S.meta.built}` : "");
   await setCar(S.car);
   window.addEventListener("hashchange", () => {
     const [c, p] = location.hash.slice(1).split("/"), car = c === "ic" || c === "ev" ? c : S.car, page = PAGES.some((x) => x.id === p) ? p : S.page;
