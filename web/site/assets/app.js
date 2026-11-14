@@ -465,22 +465,26 @@ async function doPreview() {
 function about() {
   const m = S.meta;
   return el("div", { class: "card wide prose", html: `
-<h3>What this is</h3>
-<p>The team's predictive lap simulation for the CT-17 IC and CT-17 EV, as a website. The page opens with the baseline results already computed.
+<h3>WHAT IS THIS?</h3>
+<p>A website interface for a custom, UConn Formula SAE predictive lap simulation for the design of both the IC and EV cars, with CT-17 IC and CT-17 EV as the baseline. The page opens with these baseline results already computed.
 When you change an input and press <b>Run simulation</b>, the same Python model the notebooks use (<code>fsae_vd</code>, <code>fsae_pt</code>, <code>fsae_ev</code>) runs inside your browser.
 The first run downloads the Python runtime (about 40 MB, cached afterwards) and takes longer than the ones after it.</p>
-<h3>What runs here</h3>
+<h3>WHAT RUNS HERE?</h3>
 <ul><li>Quasi-steady-state four-wheel vehicle model, tire and traction envelope, hardpoint kinematics, component aero model.</li>
 <li>IC powertrain: restricted engine, gearbox, chain, differential, cooling, fuel. EV powertrain: motor, inverter, accumulator, regen.</li>
 <li>All four dynamic events, endurance lap by lap, input sweeps, and the EV power-limit and gearing studies.</li>
 <li>The spaceframe beam model: move nodes, change tube sizes and materials, and see mass, CG and torsional stiffness.</li>
 <li>Suspension kinematics from the hard points: drag a point and the camber, roll-centre and bump-steer curves follow.</li></ul>
-<h3>What does not run in a browser</h3>
-<ul><li>Multibody minimum-lap-time optimal control (CasADi + IPOPT) and the CFD solver (Numba). Run those from the notebooks.</li>
-<li>Reading AiM <code>.xrk</code> logs and fitting from logged or TTC data. The site uses the values already in the config files.</li></ul>
-<h3>Reading the numbers</h3>
-<p>Inputs are stored in SI. Type a unit to enter anything else: <code>350 lbf/in</code>, <code>11 in</code>, <code>80 kW</code>, <code>245 kg</code>. Every EV input is currently a placeholder; see Accumulator → EV input status.</p>
-<p class="muted">Built ${m.built || "?"}${m.commit ? " · commit " + m.commit : ""} · simulation bundle ${m.bundle_kB || "?"} kB</p>` });
+<h3>READING THE NUMBERS</h3>
+<p>Inputs are stored in SI. Type a unit to enter anything else: <code>350 lbf/in</code>, <code>11 in</code>, <code>80 kW</code>, <code>245 kg</code>. NOTE: Every EV input is currently a placeholder; see Accumulator → EV input status.</p>
+<h3>READING THE GRAPHS</h3>
+<p>The following are PDFs of papers designed to help assist with the usage and interpretation of the graphical representations produced by the predictive lap simulation. The documentation includes graphics produced in the Jupyter notebooks [significantly more figures] as well as the website.</p>
+<ul><li>Powertrain Figure Guide: <a href="https://drive.google.com/file/d/1YBwXQAmsz8UNeMr8VXpKIFec95trGj-K/view?usp=sharing" target="_blank">Predictive Lap Simulation – Graph Interpretation Guide (PDF)</a></li>
+</ul>
+<h3>DOCUMENTATION</h3>
+<p>The following are PDF's of papers designed to help assist with the actual construction and modification of the predictive lap simulation source code. These files outline design decisions, important physical and mathematical implementations, numerical methods, data processing and more.</p>
+<ul><li>Powertrain Figure Guide: <a href="https://drive.google.com/file/d/1YBwXQAmsz8UNeMr8VXpKIFec95trGj-K/view?usp=sharing" target="_blank">Predictive Lap Simulation – Graph Interpretation Guide (PDF)</a></li>
+<p class="muted">Built by Haley Harper, UConn Formula SAE, Data Acquisition</p>`});
 }
 
 function render() {
