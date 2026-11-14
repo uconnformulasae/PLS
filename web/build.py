@@ -45,6 +45,7 @@ BUNDLE = [
     ("IC/data/dyno", ["*.csv"]),
     ("IC/data/frame", ["*.csv"]),
     ("IC/data/tracks/ic_tracks2026", ["*.csv"]),
+    ("IC/data/tracks", ["*.csv"]),
     ("ev/fsae_ev", ["*.py"]),
     ("ev/configs", ["*.yaml"]),
     ("ev/configs/tracks", ["*.yaml"]),
@@ -87,7 +88,7 @@ import json, sys
 import lapsim_web as w
 out = {}
 for car in ("ic", "ev"):
-    d = {"schema": w.schema(car), "result": w.run(car), "tracks": w.tracks(car)}
+    d = {"schema": w.schema(car), "result": w.run(car), "tracks": w.tracks(car), "geometry": w.geometry(car)}
     if car == "ev" and sys.argv[2] == "1":
         d["studies"] = w.ev_studies()
     json.dump(d, open(f"{sys.argv[1]}/{car}.json", "w"), allow_nan=False, separators=(",", ":"))
@@ -117,6 +118,17 @@ def script_copies():
     write(SITE / "assets" / "worker.js.js", "assets/worker.js", json.dumps(w.read_text()))
 
 
+def stamp_assets():
+    """index.html asks for its scripts and style sheet with ?v=<hash of their contents>, so a browser never runs an
+    old cached copy of one file against a new copy of another."""
+    import hashlib
+    import re
+    names = ("app.css", "app.js", "editors.js")
+    h = hashlib.sha1(b"".join((SITE / "assets" / n).read_bytes() for n in names)).hexdigest()[:10]
+    f = SITE / "index.html"
+    f.write_text(re.sub(r'(assets/(?:%s))(\?v=\w+)?"' % "|".join(re.escape(n) for n in names), r'\1?v=%s"' % h, f.read_text()))
+
+
 def git_commit():
     try:
         return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
@@ -144,6 +156,7 @@ def main():
             "bundle_kB": round(z.stat().st_size / 1e3), "files": [_rel(f) for f in files]}
     (SITE / "data" / "meta.json").write_text(json.dumps(meta, indent=1))
     (SITE / ".nojekyll").write_text("")
+    stamp_assets()
     script_copies()
     print(f"site: {SITE}")
     if a.serve:

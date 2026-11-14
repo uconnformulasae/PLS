@@ -210,6 +210,9 @@ def _walk(obj, prefix, rows, meta=None):
             kind = "bool" if isinstance(v, (bool, np.bool_)) else "text" if isinstance(v, str) else "number"
             rows.append({"key": key, "value": _j(v, 7), "kind": kind, "unit": md.get("unit", ""),
                          "note": md.get("note", ""), "source": md.get("source", "")})
+        elif isinstance(v, (list, tuple, np.ndarray)) and len(v):
+            rows.append({"key": key, "value": _j(np.asarray(v, float) if not isinstance(v[0], str) else list(v), 7), "kind": "list",
+                         "unit": md.get("unit", ""), "note": md.get("note", ""), "source": md.get("source", "")})
 
 
 def _load(car, overrides=None):
@@ -229,8 +232,16 @@ def _load(car, overrides=None):
         objs = {"vehicle": cfg, "ev": evc, "pack": bcfg, "_status": status}
     else:
         raise ValueError(f"car must be 'ic' or 'ev', not {car!r}")
-    for k, v in (overrides or {}).items():
-        _set(objs, k, v)
+    ov = dict(overrides or {})
+    for k, v in ov.items():
+        if not k.startswith("geom:"):
+            _set(objs, k, v)
+    if ov.get("geom:tracks"):
+        _apply_tracks(cfg, ov["geom:tracks"])
+    if ov.get("geom:hardpoints"):
+        _apply_hardpoints(cfg, ov["geom:hardpoints"])
+    if ov.get("geom:frame"):
+        objs["vehicle"] = _apply_frame(cfg, ov["geom:frame"])
     return objs
 
 
@@ -258,6 +269,9 @@ def _set(objs, key, value):
                 value = float(s)
             except ValueError:
                 value = s
+    if isinstance(value, list) and not isinstance(obj, dict):
+        setattr(obj, leaf, value)
+        return
     if isinstance(obj, dict):
         obj[leaf] = parse_quantity(value, angle_field=leaf.endswith("_deg")) if isinstance(value, str) else value
     elif not parents or in_dict or not hasattr(objs[which], "set"):
@@ -344,7 +358,11 @@ def _aero(veh):
 
 def _suspension(veh):
     from fsae_vd import hardpoints, reports
-    axle, car = reports.design_report(veh)
+    veh.pt.unlimited = True          # tire-limited, as traction_ggv does: same numbers, without the engine look-ups
+    try:
+        axle, car = reports.design_report(veh)
+    finally:
+        veh.pt.unlimited = False
     out = {"axles": _table(axle.rename_axis("quantity")), "car": _j(car)}
     kin = {}
     for which in ("front", "rear"):
@@ -370,17 +388,7 @@ def _brakes(veh):
             "hardware": _j(brakes.hardware_summary(veh.cfg))}
 
 
-def _frame():
-    from fsae_frame import model, tubes
-    f = IC / "data" / "frame" / "ct17_spaceframe_tubes.csv"
-    tb = model.to_car(tubes.load_tubes(f))
-    seg = [[_num(v, 4) for v in (*t.p0, *t.p1)] + [_num(t.od * 1e3, 4), _num(t.wall * 1e3, 3)] for t in tb]
-    s = tubes.summary(tb)
-    return {"tubes": seg, "summary": _j(s) if not isinstance(s, pd.DataFrame) else _table(s)}
-
-
-def _ic_powertrain(res):
-    veh, T = res.vehicle, res.tables
+def _ic_powertrain(veh, T):
     rpm = np.arange(3000, veh.ptc.engine.rev_limit + 1, 250.0) if hasattr(veh.ptc.engine, "rev_limit") else np.arange(3000, 13001, 250.0)
     w = veh.engine.wot(rpm)
     idx = _pick(len(T.v), 300)
@@ -392,9 +400,8 @@ def _ic_powertrain(res):
                          "v_top": _num(T.v_top)}}
 
 
-def _ev_powertrain(res):
+def _ev_powertrain(veh, T):
     import fsae_ev as ev
-    veh, T = res.vehicle, res.tables
     ep = T.ep
     idx = _pick(len(T.v), 300)
     code = np.asarray(T.code)[idx]
@@ -450,8 +457,8 @@ def run(car, overrides=None, events=None, detail=True):
         _safe(sub, "aero", lambda: _aero(veh))
         _safe(sub, "suspension", lambda: _suspension(veh))
         _safe(sub, "brakes", lambda: _brakes(veh))
-        _safe(sub, "frame", _frame)
-        _safe(sub, "powertrain", lambda: _ic_powertrain(res) if car == "ic" else _ev_powertrain(res))
+        _safe(sub, "frame", lambda: frame_eval((overrides or {}).get("geom:frame"), cfg))
+        _safe(sub, "powertrain", lambda: _ic_powertrain(veh, res.tables) if car == "ic" else _ev_powertrain(veh, res.tables))
         if car == "ev":
             import fsae_ev as ev
             for e in ("autocross", "endurance"):
@@ -513,3 +520,357 @@ def tracks(car="ic"):
             out[e] = {"file": Path(f).name, "length_m": _num(t.length), "s": _j(t.s[idx]), "x": _j(t.x[idx]),
                       "y": _j(t.y[idx]), "kappa": _j(t.kappa[idx])}
     return out
+
+
+# --------------------------------------------------------------------------- tracks
+TRACK_DIRS = ("data/tracks/ic_tracks2026", "data/tracks")
+
+
+def track_files():
+    """Track centre lines in the bundle: {file name: path}."""
+    out = {}
+    for d in TRACK_DIRS:
+        for f in sorted((IC / d).glob("*.csv")):
+            out.setdefault(f.name, f)
+    return out
+
+
+def _apply_tracks(cfg, choice):
+    """choice = {'autocross': 'file.csv', 'endurance': 'file.csv'}"""
+    files = track_files()
+    for e in ("autocross", "endurance"):
+        f = (choice or {}).get(e)
+        if f:
+            if f not in files:
+                raise ValueError(f"track file {f!r} is not in the bundle")
+            setattr(cfg.events, f"{e}_track", str(files[f]))
+
+
+# --------------------------------------------------------------------------- suspension hard points
+# how the points are joined, for drawing (names as in the OptimumK export, left corner)
+HP_LINKS = [("CHAS_LowFor", "UPRI_LowPnt", "arm"), ("CHAS_LowAft", "UPRI_LowPnt", "arm"),
+            ("CHAS_UppFor", "UPRI_UppPnt", "arm"), ("CHAS_UppAft", "UPRI_UppPnt", "arm"),
+            ("UPRI_LowPnt", "UPRI_UppPnt", "upright"), ("UPRI_UppPnt", "UPRI_TiePnt", "upright"), ("UPRI_LowPnt", "UPRI_TiePnt", "upright"),
+            ("CHAS_TiePnt", "UPRI_TiePnt", "tie"), ("NSMA_PPAttPnt", "ROCK_RodPnt", "rod"),
+            ("ROCK_RodPnt", "CHAS_RocPiv", "rocker"), ("CHAS_RocPiv", "ROCK_CoiPnt", "rocker"), ("ROCK_RodPnt", "ROCK_CoiPnt", "rocker"),
+            ("ROCK_CoiPnt", "CHAS_AttPnt", "damper"), ("NSMA_UBarAttPnt", "UBAR_AttPnt", "arb"), ("UBAR_AttPnt", "CHAS_PivPnt", "arb")]
+HP_NAMES = {"CHAS_LowFor": "lower arm, front chassis pivot", "CHAS_LowAft": "lower arm, rear chassis pivot",
+            "CHAS_UppFor": "upper arm, front chassis pivot", "CHAS_UppAft": "upper arm, rear chassis pivot",
+            "UPRI_LowPnt": "lower ball joint", "UPRI_UppPnt": "upper ball joint", "CHAS_TiePnt": "tie rod, chassis end",
+            "UPRI_TiePnt": "tie rod, upright end", "NSMA_PPAttPnt": "pull rod, outboard end", "CHAS_AttPnt": "damper, chassis end",
+            "CHAS_RocAxi": "rocker axis point", "CHAS_RocPiv": "rocker pivot", "ROCK_RodPnt": "rocker, rod end",
+            "ROCK_CoiPnt": "rocker, damper end", "NSMA_UBarAttPnt": "ARB drop link, rocker end", "UBAR_AttPnt": "ARB blade tip",
+            "CHAS_PivPnt": "ARB pivot"}
+_BASE_HP = {}
+
+
+def _hp_file(which):
+    """The baseline hard-point file of an axle (never an edited copy)."""
+    if which not in _BASE_HP:
+        import fsae_vd as vd
+        cfg = vd.load_config(str(IC / "configs" / "ct17_baseline.yaml"))
+        _BASE_HP[which] = getattr(cfg, which).hardpoint_file
+    return _BASE_HP[which]
+
+
+def hardpoints():
+    """Baseline hard points of both axles (left corner; export axes: x forward, y left, z up; metres)."""
+    from fsae_vd import hardpoints as hp
+    out = {"links": [list(l) for l in HP_LINKS], "names": HP_NAMES}
+    for which in ("front", "rear"):
+        f = _hp_file(which)
+        if not f:
+            continue
+        d = hp.load_optimumk_csv(f)
+        out[which] = {"points": {k: _j(v, 7) for k, v in d["points"].items()}, "wheel": _j(d["wheel"], 6), "title": d["name"]}
+    return out
+
+
+def _apply_hardpoints(cfg, edits):
+    """edits = {'front': {point name: [x, y, z] in metres}, 'rear': {...}}. The edited export is written next to
+    the temp files and the car config pointed at it, so every model that reads the hard points sees the change."""
+    import hashlib
+    import tempfile
+    for which in ("front", "rear"):
+        ed = {k: v for k, v in ((edits or {}).get(which) or {}).items() if v is not None}
+        if not ed:
+            continue
+        src = Path(_hp_file(which))
+        out = []
+        for ln in src.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+            c = ln.split(",")
+            name = c[1].strip() if len(c) > 8 else ""
+            key = name[:-2] if name.endswith("_L") else name
+            if key in ed:
+                x, y, z = (1e3 * float(v) for v in ed[key])
+                c[2:5] = [f"{x:.4f}", f"{y:.4f}", f"{z:.4f}"]
+                c[6:9] = [f"{x:.4f}", f"{-y:.4f}", f"{z:.4f}"]
+                ln = ",".join(c)
+            out.append(ln)
+        text = "\n".join(out) + "\n"
+        d = Path(tempfile.gettempdir()) / "lapsim_hardpoints"
+        d.mkdir(parents=True, exist_ok=True)
+        f = d / f"{which}_{hashlib.sha1(text.encode()).hexdigest()[:16]}.csv"
+        if not f.exists():
+            f.write_text(text)
+        getattr(cfg, which).hardpoint_file = str(f)
+
+
+# --------------------------------------------------------------------------- frame
+MATERIALS = {
+    "4130 steel": {"E": 205e9, "G": 80e9, "density": 7850.0},
+    "1020 mild steel": {"E": 200e9, "G": 77e9, "density": 7870.0},
+    "6061-T6 aluminium": {"E": 68.9e9, "G": 26e9, "density": 2700.0},
+    "Ti-3Al-2.5V titanium": {"E": 100e9, "G": 40e9, "density": 4480.0},
+}
+FRAME_TOL = 0.022          # ends this close are one welded node (as in fsae_frame.FrameModel)
+_FRAME = {}
+
+
+def _frame_tubes():
+    if "tubes" not in _FRAME:
+        from fsae_frame import model, tubes
+        _FRAME["tubes"] = model.to_car(tubes.load_tubes(IC / "data" / "frame" / "ct17_spaceframe_tubes.csv"))
+    return _FRAME["tubes"]
+
+
+def frame_geometry():
+    """The frame as an editable structure (car axes: x rearward from the front axle, y right, z up; metres).
+
+    nodes   welded joints: tube ends closer than FRAME_TOL are one node
+    tubes   [node0, node1, size index] + the small offset of each end from its node, so the baseline is exact.
+            An end coped onto the side of another tube has node -1 and a 'host' [tube, fraction along it]: it
+            follows that tube when its nodes move.
+    sizes   [{shape, od, wall, material}] (metres)
+    """
+    if "geometry" in _FRAME:
+        return _FRAME["geometry"]
+    tb = _frame_tubes()
+    n = len(tb)
+    ends = np.array([p for t in tb for p in (t.p0, t.p1)])
+    host = {}
+    for i, t in enumerate(tb):
+        for k, e in enumerate((t.p0, t.p1)):
+            best = None
+            for j, u in enumerate(tb):
+                if j == i:
+                    continue
+                d = u.p1 - u.p0
+                sp = float(np.clip(((e - u.p0) @ d) / (d @ d), 0.0, 1.0))
+                dist = float(np.linalg.norm(u.p0 + sp * d - e))
+                if dist < FRAME_TOL and FRAME_TOL < sp * u.length < u.length - FRAME_TOL and (best is None or dist < best[0]):
+                    best = (dist, j, sp)
+            if best:
+                host[2 * i + k] = best[1:]
+    parent = list(range(2 * n))
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    free = [a for a in range(2 * n) if a not in host]
+    for a in free:
+        d = np.linalg.norm(ends - ends[a], axis=1)
+        for b in np.flatnonzero(d < FRAME_TOL):
+            if b > a and b not in host and b // 2 != a // 2:
+                parent[find(int(b))] = find(a)
+    roots = sorted({find(a) for a in free})
+    idx = {r: k for k, r in enumerate(roots)}
+    members = {k: [] for k in range(len(roots))}
+    for a in free:
+        members[idx[find(a)]].append(a)
+    nodes = np.array([ends[m].mean(0) for m in members.values()])
+    sizes, size_of = [], {}
+    tubes = []
+    for i, t in enumerate(tb):
+        key = (t.shape, round(t.od / 0.0254, 3), round(t.wall / 0.0254, 3))      # stock sizes, as tubes.summary groups them
+        if key not in size_of:
+            size_of[key] = len(sizes)
+            sizes.append({"shape": t.shape, "od": _num(key[1] * 0.0254, 6), "wall": _num(key[2] * 0.0254, 6), "material": "4130 steel"})
+        row = {"n": [-1, -1], "off": [[0, 0, 0], [0, 0, 0]], "host": [None, None], "size": size_of[key], "bend": bool(t.bend)}
+        for k in (0, 1):
+            a = 2 * i + k
+            if a in host:
+                j, sp = host[a]
+                u = tb[j]
+                row["host"][k] = [int(j), _num(sp, 7)]
+                row["off"][k] = _j(ends[a] - (u.p0 + sp * (u.p1 - u.p0)), 6)
+            else:
+                nd = idx[find(a)]
+                row["n"][k] = int(nd)
+                row["off"][k] = _j(ends[a] - nodes[nd], 6)
+        tubes.append(row)
+    _FRAME["geometry"] = {"nodes": _j(nodes, 7), "tubes": tubes, "sizes": sizes, "materials": MATERIALS, "use_stiffness": False}
+    return _FRAME["geometry"]
+
+
+def _frame_build(state):
+    """Tube list + per-tube material from an editable frame state (frame_geometry() format)."""
+    from fsae_frame.tubes import Tube
+    nodes = np.array(state["nodes"], float)
+    rows = state["tubes"]
+    P = [[None, None] for _ in rows]
+    for _ in range(8):                                    # coped ends follow their host tube: resolve in passes
+        todo = False
+        for i, r in enumerate(rows):
+            for k in (0, 1):
+                if P[i][k] is not None:
+                    continue
+                off = np.array(r["off"][k], float)
+                if r["n"][k] is not None and r["n"][k] >= 0:
+                    P[i][k] = nodes[r["n"][k]] + off
+                else:
+                    j, sp = r["host"][k]
+                    if j < len(rows) and P[j][0] is not None and P[j][1] is not None:
+                        P[i][k] = P[j][0] + sp * (P[j][1] - P[j][0]) + off
+                    else:
+                        todo = True
+        if not todo:
+            break
+    tubes, mats = [], []
+    for i, r in enumerate(rows):
+        if P[i][0] is None or P[i][1] is None:
+            raise ValueError(f"tube {i + 1}: an end is joined to a tube that no longer exists")
+        z = state["sizes"][r["size"]]
+        if not (z["od"] > 0 and 0 < z["wall"] <= z["od"] / 2):
+            raise ValueError(f"tube size {r['size'] + 1}: wall must be between 0 and half the outer size")
+        if np.linalg.norm(P[i][1] - P[i][0]) < 1e-4:
+            raise ValueError(f"tube {i + 1} has zero length")
+        tubes.append(Tube(P[i][0], P[i][1], float(z["od"]), float(z["wall"]), z.get("shape", "round"), bool(r.get("bend")), -1))
+        mats.append(z.get("material", "4130 steel"))
+    return tubes, mats
+
+
+def _frame_props(state, pickups):
+    """Mass, CG, torsional stiffness and per-tube strain-energy share of a frame state."""
+    from fsae_frame import model
+    tubes, mats = _frame_build(state)
+    lib = dict(MATERIALS)
+    lib.update(state.get("materials") or {})
+    ref = model.STEEL_4130
+    L = np.array([t.length for t in tubes])
+    m = np.array([lib[k]["density"] * t.area * t.length for t, k in zip(tubes, mats)])
+    mid = np.array([0.5 * (t.p0 + t.p1) for t in tubes])
+    out = {"count": len(tubes), "length": float(L.sum()), "mass": float(m.sum()), "cg": (m[:, None] * mid).sum(0) / m.sum(),
+           "tube_length": L, "tube_mass": m}
+    by = {}
+    for r, l, mm in zip(state["tubes"], L, m):
+        b = by.setdefault(r["size"], [0, 0.0, 0.0])
+        b[0] += 1
+        b[1] += l
+        b[2] += mm
+    out["sizes"] = [{"count": by.get(i, [0, 0, 0])[0], "length": by.get(i, [0, 0, 0])[1], "mass": by.get(i, [0, 0, 0])[2]}
+                    for i in range(len(state["sizes"]))]
+    try:
+        fm = model.FrameModel(tubes, pickups, ref, FRAME_TOL)
+        for e in fm.elements:                              # each tube's own material: scale EA, EI, GJ
+            if e.tube >= 0:
+                mt = lib[mats[e.tube]]
+                e.A *= mt["E"] / ref["E"]
+                e.I *= mt["E"] / ref["E"]
+                e.J *= mt["G"] / ref["G"]
+        pieces, loose = fm.connectivity()
+        out["pieces"], out["free_ends"] = int(pieces), int(len(loose))
+        tt = fm.torsion_test()
+        out["k_per_deg"], out["k_per_rad"] = float(tt["stiffness_per_deg"]), float(tt["stiffness"])
+        out["energy"] = [float(tt["energy_by_tube"].get(i, 0.0)) for i in range(len(tubes))]
+    except Exception as e:  # noqa: BLE001
+        out["stiffness_error"] = f"{type(e).__name__}: {e}"
+    return out
+
+
+def _pickups(cfg):
+    from fsae_frame import model
+    return model.load_pickups(cfg.front.hardpoint_file, cfg.rear.hardpoint_file)
+
+
+def _frame_base(cfg=None):
+    if "base" not in _FRAME:
+        import fsae_vd as vd
+        base_cfg = vd.load_config(str(IC / "configs" / "ct17_baseline.yaml"))
+        _FRAME["base"] = _frame_props(frame_geometry(), _pickups(base_cfg))
+    return _FRAME["base"]
+
+
+def _apply_frame(cfg, state):
+    """The car with the edited frame in place of the baseline one: mass, CG and (when asked) torsional stiffness."""
+    from fsae_frame import lapsim as FL
+    base, new = _frame_base(), _frame_props(state, _pickups(cfg))
+    c = FL.swap_frame(cfg, base, new)
+    if state.get("use_stiffness") and "k_per_rad" in new:
+        c.mass.chassis_torsional_stiffness = new["k_per_rad"]
+    return c
+
+
+def frame_eval(state=None, cfg=None):
+    """Numbers and drawing data for a frame state (None = the baseline frame)."""
+    import fsae_vd as vd
+    from fsae_frame import lapsim as FL
+    cfg = cfg or vd.load_config(str(IC / "configs" / "ct17_baseline.yaml"))
+    base = _frame_base()
+    st = state or frame_geometry()
+    new = _frame_props(st, _pickups(cfg)) if state else base
+    tubes, _ = _frame_build(st)
+    out = {k: _j(new.get(k)) for k in ("count", "length", "mass", "cg", "pieces", "free_ends", "k_per_deg", "stiffness_error", "sizes")}
+    out["energy"] = _j(np.array(new["energy"]), 4) if "energy" in new else None
+    out["tube_length"] = _j(new["tube_length"], 5)
+    out["tube_mass"] = _j(new["tube_mass"], 4)
+    out["tubes"] = [[_num(v, 5) for v in (*t.p0, *t.p1)] + [_num(t.od * 1e3, 4), _num(t.wall * 1e3, 3)] for t in tubes]
+    out["base"] = {"mass": _num(base["mass"]), "cg": _j(base["cg"]), "k_per_deg": _num(base.get("k_per_deg"))}
+    out["edited"] = bool(state)
+    out["use_stiffness"] = bool(state and state.get("use_stiffness"))
+    out["car"] = {"mass_kg": _num(cfg.mass.total), "cg_height_mm": _num(cfg.mass.cg_height * 1e3),
+                  "front_weight_%": _num(100 * cfg.mass.front_weight_fraction),
+                  "frame_twist_in_sim": cfg.mass.chassis_torsional_stiffness is not None}
+    return out
+
+
+# --------------------------------------------------------------------------- geometry + live preview
+def geometry(car="ic"):
+    """Everything the interactive figures start from: hard points, the frame, the track files, the car's layout."""
+    out = {}
+    _safe(out, "hardpoints", hardpoints)
+    _safe(out, "frame", frame_geometry)
+    _safe(out, "tracks", lambda: sorted(track_files()))
+    cfg = _load(car)["vehicle"]
+    out["track_choice"] = {e: Path(getattr(cfg.events, f"{e}_track")).name for e in ("autocross", "endurance")
+                           if getattr(cfg.events, f"{e}_track")}
+    return out
+
+
+PREVIEW_BLOCKS = ("aero", "suspension", "brakes", "frame", "powertrain", "ggv")
+
+
+def preview(car, overrides=None, blocks=PREVIEW_BLOCKS):
+    """The subsystem data for edited inputs WITHOUT running the events: fast enough to follow a slider or a drag."""
+    t0 = time.time()
+    car = car.lower()
+    objs = _load(car, overrides)
+    cfg = objs["vehicle"]
+    if car == "ic":
+        import fsae_pt as pt
+        veh = pt.PTVehicle(cfg, objs["pt"])
+    else:
+        import fsae_ev as ev
+        veh = ev.EVVehicle(cfg, objs["ev"], objs["pack"])
+    out = {}
+    for b in blocks:
+        if b == "aero":
+            _safe(out, b, lambda: _aero(veh))
+        elif b == "suspension":
+            _safe(out, b, lambda: _suspension(veh))
+        elif b == "brakes":
+            _safe(out, b, lambda: _brakes(veh))
+        elif b == "frame":
+            _safe(out, b, lambda: frame_eval((overrides or {}).get("geom:frame"), cfg))
+        elif b == "ggv":
+            _safe(out, b, lambda: _ggv(veh.traction_ggv()))
+        elif b == "powertrain":
+            if car == "ic":
+                import fsae_pt as pt
+                _safe(out, b, lambda: _ic_powertrain(veh, pt.PTTables(veh)))
+            else:
+                _safe(out, b, lambda: _ev_powertrain(veh, veh.tables0))
+    return {"car": car, "blocks": out, "mass_kg": _num(veh.m), "notes": [str(n) for n in veh.warnings], "solve_s": _num(time.time() - t0, 3)}

@@ -13,7 +13,7 @@ LAPSIM_ROOT=/path/to/fsae_lapsim python web/build.py --serve      # build, then 
 |---|---|
 | `bridge/lapsim_web.py` | Calls `fsae_vd` / `fsae_pt` / `fsae_ev` and returns JSON: inputs, event results, every lap channel, subsystem data, sweeps. |
 | `build.py` | Zips the simulation packages, configs and track files into `site/py/lapsim.zip`, then runs both cars **from that zip** to write the baseline `site/data/*.json`. |
-| `site/` | The website: `index.html`, `assets/app.css`, `assets/app.js`, `assets/worker.js`. This folder is what gets published. |
+| `site/` | The website: `index.html`, `assets/app.css`, `assets/app.js`, `assets/editors.js`, `assets/worker.js`. This folder is what gets published. |
 
 `site/index.html` also works opened by double-click (no server): `build.py` writes a script copy of every data file
 for that case. Running a simulation still needs the internet the first time, to download the Python runtime.
@@ -53,6 +53,22 @@ needs GitHub Enterprise Cloud; Pages from a private repository on other paid pla
 Colours are the variables at the top of `site/assets/app.css`. `--navy` (`#000E2F`) is sampled from the team logo.
 `site/assets/logo.png` is the team mark cut out of the square logo image (white on transparent) and
 `favicon.png` is the square logo. A vector (SVG) copy of the logo would be sharper on high-density screens.
+
+## Interactive figures and live preview
+
+`site/assets/editors.js` holds the figures you can drag and the sliders:
+
+* **Frame editor** (Chassis & frame): drag nodes in side / top / front views, add or delete tubes, change each
+  stock size's section, wall and material, or a tube's length. `fsae_frame`'s beam model recomputes mass, CG and
+  torsional stiffness; the lap simulation gets the new mass and CG (and the frame's twist when that box is ticked).
+* **Hard-point editor** (Suspension): drag any suspension point; the kinematics are re-solved from the edited
+  OptimumK export and feed the lap simulation.
+* **Car layout** (Chassis, Aero), **volumetric efficiency** and **gear ratios** (IC powertrain), **event tracks** (Overview).
+* **Quick adjust** sliders on every subsystem page, for the main values in everyday units.
+
+Each of these writes an ordinary input override (`geom:frame`, `geom:hardpoints`, `geom:tracks`, or a config key),
+so Export / Import, sweeps and Run simulation all see it. With **Live preview** on, a change re-computes that page's
+subsystem data in the browser (`preview()` in the bridge, no lap); lap times change only with Run simulation.
 
 ## Adding a visual
 

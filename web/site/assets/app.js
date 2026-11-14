@@ -91,7 +91,8 @@ function table(t, { fmtCell, maxRows } = {}) {
     el("thead", {}, el("tr", {}, t.columns.map((c) => el("th", {}, pretty(c))))),
     el("tbody", {}, rows.map((r) => el("tr", {}, r.map((v, i) => el("td", {}, fmtCell ? fmtCell(v, t.columns[i]) : fmt(v))))))));
 }
-const kvTable = (obj) => table({ columns: ["quantity", "value"], rows: Object.entries(obj || {}).map(([k, v]) => [k, typeof v === "object" && v ? JSON.stringify(v) : v]) });
+const kvTable = (obj) => table({ columns: ["quantity", "value"], rows: Object.entries(obj || {}).filter(([, v]) => v != null)
+  .map(([k, v]) => [k, Array.isArray(v) ? v.map((x) => fmt(x)).join(", ") : typeof v === "object" ? Object.entries(v).map(([a, c]) => `${pretty(a)} ${fmt(c)}`).join(" · ") : v]) });
 
 /* Channels along the lap as small multiples on one shared x axis. groups = [["v"], ["Fz_fo","Fz_fi"], ...]:
    channels in the same inner list share a panel (same unit). */
@@ -340,16 +341,6 @@ V("brakes", "brk_lap", "Braking around the lap", "", (b) => { const p = plotDiv(
 V("brakes", "brk_hw", "Brake hardware", "", (b) => b.append(kvTable(need(SUB().brakes).hardware)), { off: true });
 
 // ---- chassis
-V("chassis", "frame3d", "Spaceframe", "Tubes extracted from the CAD part. Drag to rotate.", (b) => {
-  const f = need(SUB().frame), x = [], y = [], z = [], p = plotDiv("tall"); b.append(p);
-  for (const t of f.tubes) { x.push(t[0], t[3], null); y.push(t[1], t[4], null); z.push(t[2], t[5], null); }
-  const ax = { showgrid: true, gridcolor: "#eef1f6", zeroline: false, showticklabels: false, title: "" };
-  Plotly.react(p, [{ type: "scatter3d", mode: "lines", x, y, z, line: { color: NAVY, width: 5 }, hoverinfo: "skip" }],
-    { margin: { l: 0, r: 0, t: 0, b: 0 }, paper_bgcolor: "#fff", scene: { aspectmode: "data", xaxis: ax, yaxis: ax, zaxis: ax, camera: { eye: { x: 1.5, y: -1.6, z: 0.8 } } } },
-    { responsive: true, displaylogo: false, displayModeBar: false });
-}, { wide: true });
-V("chassis", "framesum", "Frame summary", "", (b) => { const s = need(SUB().frame).summary; b.append(s.columns ? table(s) : kvTable(s)); });
-
 // ---- studies
 V("studies", "sweep", "Sweep one input", "Runs acceleration, skidpad and autocross at each value.", (b) => {
   const inputs = S.data[S.car].schema.inputs.filter((i) => i.kind === "number" && i.value != null);
@@ -388,6 +379,10 @@ V("studies", "esweep", "Endurance against the power limit", "Baseline car. Which
 V("studies", "gsweep", "Reduction ratio", "Baseline car. Acceleration, autocross and top speed against the overall ratio.", (b) =>
   studyChart(b, "gearing_sweep", "ratio", [["acceleration_s", "acceleration [s]"], ["autocross_s", "autocross [s]"], ["top_speed_kph", "top speed [km/h]"]], "overall reduction ratio"), { car: "ev" });
 
+{ const B = { powertrain: ["eng_torque", "eng_power", "tractive", "gears", "ev_torque", "ev_power", "ev_force", "ev_eff"], ggv: ["gg", "aymax"],
+    suspension: ["sus_axles", "sus_car", "camber", "rc", "toe", "damperlen"], aero: ["downforce", "drag", "balance", "dragpower", "aerocomp"], brakes: ["balance", "brk_table", "brk_hw"] };
+  for (const [b, ids] of Object.entries(B)) for (const v of VISUALS) if (ids.includes(v.id)) v.blocks = [b]; }
+
 // ------------------------------------------------------------------ inputs panel
 function inputsPanel(groups, open = false) {
   const car = S.car, all = S.data[car].schema.inputs.filter((i) => !groups || groups.includes(i.group));
@@ -397,13 +392,16 @@ function inputsPanel(groups, open = false) {
   const names = { vehicle: "car", pt: "powertrain", ev: "EV powertrain", pack: "accumulator" };
   const field = (i) => {
     const ov = S.overrides[car], leaf = i.key.split(":")[1].split(".").slice(1).join(".") || i.key.split(":")[1];
-    const inp = el("input", { type: "text", inputmode: i.kind === "number" ? "decimal" : "text", value: i.key in ov ? ov[i.key] : (i.value ?? ""), placeholder: i.value == null ? "not set" : "", "aria-label": i.key,
+    const isList = i.kind === "list", show = (v) => (isList ? JSON.stringify(v).replace(/^\[|\]$/g, "").replace(/,/g, ", ") : v ?? "");
+    const inp = el("input", { type: "text", inputmode: i.kind === "number" ? "decimal" : "text", value: show(i.key in ov ? ov[i.key] : i.value), placeholder: i.value == null ? "not set" : "", "aria-label": i.key,
       onchange: () => {
-        const raw = inp.value.trim(), num = raw !== "" && !isNaN(raw) ? +raw : null, v = i.kind === "bool" ? raw.toLowerCase() === "true" : num != null ? num : raw === "" ? null : raw;
-        if (v === i.value || (v == null && i.value == null)) delete ov[i.key]; else ov[i.key] = v;
+        const raw = inp.value.trim(), num = raw !== "" && !isNaN(raw) ? +raw : null;
+        let v = i.kind === "bool" ? raw.toLowerCase() === "true" : num != null ? num : raw === "" ? null : raw;
+        if (isList) { try { v = JSON.parse("[" + raw + "]"); } catch (e) { inp.value = show(i.key in ov ? ov[i.key] : i.value); return alert("A list is numbers separated by commas, e.g. 2.583, 2.0, 1.667"); } }
+        if (JSON.stringify(v) === JSON.stringify(i.value) || (v == null && i.value == null)) delete ov[i.key]; else ov[i.key] = v;
         row.classList.toggle("changed", i.key in ov); pending();
       } });
-    const row = el("div", { class: "field" + (i.key in ov ? " changed" : ""), "data-k": (i.key + " " + i.note).toLowerCase() },
+    const row = el("div", { class: "field" + (isList ? " list" : "") + (i.key in ov ? " changed" : ""), "data-k": (i.key + " " + i.note).toLowerCase() },
       el("label", { title: [i.note, i.source && "source: " + i.source].filter(Boolean).join(" · ") }, el("span", { class: "n" }, leaf), el("span", { class: "h" }, i.note || i.source || "")),
       el("div", { class: "in" }, inp, el("span", { class: "u" }, i.unit || "")));
     return row;
@@ -421,6 +419,48 @@ function inputsPanel(groups, open = false) {
   return el("details", { class: "inputs", open }, el("summary", {}, "Inputs", el("span", { class: "count" }, `${all.length} values · edit, then Run simulation`)), el("div", { class: "inputs-body" }, tools, secs));
 }
 
+// ------------------------------------------------------------------ live preview
+/* A change to an input re-computes that page's subsystem data (not the lap) in the browser a moment later, so curves
+   follow sliders and dragged points. Lap results only change with Run simulation. */
+const CARDS = new Map();                 // visual id -> {v, body, ctx} of the cards on screen
+const PAGE_BLOCKS = { powertrain: ["powertrain"], tires: ["ggv"], suspension: ["suspension"], aero: ["aero"], brakes: ["brakes"], chassis: ["frame"] };
+S.live = (localStorage.getItem("lapsim.live") ?? (window.innerWidth >= 900 ? "1" : "0")) === "1";
+let pvTimer = null, pvSeq = 0;
+function redraw(blocks) {
+  for (const { v, body, ctx } of CARDS.values()) {
+    if (!v.blocks || !v.blocks.some((b) => blocks.includes(b))) continue;
+    try { if (ctx.refresh) ctx.refresh(); else { body.replaceChildren(); v.draw(body, ctx); } }
+    catch (e) { body.replaceChildren(el("div", { class: "err" }, "Not available: " + (e.message || e))); }
+  }
+}
+function schedulePreview(force) {
+  if (!S.live && !force) return;
+  clearTimeout(pvTimer); pvTimer = setTimeout(doPreview, 450);
+}
+/* BLOCK_OV[car][block] = the inputs (as JSON) that block's data on screen was computed with. */
+const BLOCK_OV = { ic: {}, ev: {} };
+const blockKey = (car, b) => BLOCK_OV[car][b] ?? JSON.stringify(Object.entries(S.applied[car]).sort());
+async function doPreview() {
+  const car = S.car, blocks = PAGE_BLOCKS[S.page];
+  if (!blocks || !S.data[car]) return;
+  if (S.busy) return schedulePreview(true);
+  const key = JSON.stringify(Object.entries(S.overrides[car]).sort());
+  const need = blocks.filter((b) => blockKey(car, b) !== key);
+  if (!need.length) return;                                   // what is on screen already matches the inputs
+  const token = ++pvSeq, t0 = performance.now();
+  setStatus("Updating the preview…", "busy");
+  try {
+    const r = await call("preview", [car, S.overrides[car], need]);
+    if (token !== pvSeq) return;
+    S.data[car].result = Object.assign({}, S.data[car].result, { subsystems: Object.assign({}, S.data[car].result.subsystems, r.blocks) });   // new objects: the baseline copy stays untouched
+    for (const b of need) BLOCK_OV[car][b] = key;
+    if (car !== S.car) return;
+    const stale = !same(S.overrides[car], S.applied[car]);
+    setStatus(`Preview updated in ${((performance.now() - t0) / 1000).toFixed(1)} s.` + (stale ? " Lap times and lap channels are from the last run: press Run simulation to update them." : ""), "ok");
+    redraw(need);
+  } catch (e) { if (token === pvSeq) setStatus("Preview failed: " + (e.message || e), "err"); }
+}
+
 // ------------------------------------------------------------------ render
 function about() {
   const m = S.meta;
@@ -432,7 +472,9 @@ The first run downloads the Python runtime (about 40 MB, cached afterwards) and 
 <h3>What runs here</h3>
 <ul><li>Quasi-steady-state four-wheel vehicle model, tire and traction envelope, hardpoint kinematics, component aero model.</li>
 <li>IC powertrain: restricted engine, gearbox, chain, differential, cooling, fuel. EV powertrain: motor, inverter, accumulator, regen.</li>
-<li>All four dynamic events, endurance lap by lap, input sweeps, and the EV power-limit and gearing studies.</li></ul>
+<li>All four dynamic events, endurance lap by lap, input sweeps, and the EV power-limit and gearing studies.</li>
+<li>The spaceframe beam model: move nodes, change tube sizes and materials, and see mass, CG and torsional stiffness.</li>
+<li>Suspension kinematics from the hard points: drag a point and the camber, roll-centre and bump-steer curves follow.</li></ul>
 <h3>What does not run in a browser</h3>
 <ul><li>Multibody minimum-lap-time optimal control (CasADi + IPOPT) and the CFD solver (Numba). Run those from the notebooks.</li>
 <li>Reading AiM <code>.xrk</code> logs and fitting from logged or TTC data. The site uses the values already in the config files.</li></ul>
@@ -450,7 +492,7 @@ function render() {
   const head = el("div", { class: "page-head" }, el("div", {}, el("h1", {}, val(page.label)), page.intro ? el("p", {}, val(page.intro)) : null));
   if (page.id === "about") return main.replaceChildren(head, el("div", { class: "grid" }, about()));
   if (page.id === "inputs") return main.replaceChildren(head, inputsPanel(null, true));
-  const vis = VISUALS.filter((v) => v.page === page.id && (!v.car || v.car === car));
+  const vis = VISUALS.filter((v) => v.page === page.id && (!v.car || v.car === car)).sort((a, b) => (b.first ? 1 : 0) - (a.first ? 1 : 0));   // interactive figures lead the page
   const isOn = (v) => (v.id in S.hidden ? !S.hidden[v.id] : !v.off);
   const chips = el("div", { class: "chips" }, el("span", { class: "lbl" }, "Show"));
   if (page.lap) {
@@ -461,13 +503,16 @@ function render() {
   }
   for (const v of vis) chips.append(el("button", { class: "chip" + (isOn(v) ? " on" : ""), "aria-pressed": isOn(v), onclick: () => { S.hidden[v.id] = isOn(v); localStorage.setItem("lapsim.hidden", JSON.stringify(S.hidden)); render(); } }, v.title));
   const grid = el("div", { class: "grid" });
-  main.replaceChildren(head, ...[inputsPanel(val(page.groups) || [])].filter(Boolean), chips, grid);
+  main.replaceChildren(head, ...[typeof quickPanel === "function" ? quickPanel(page.id) : null, inputsPanel(val(page.groups) || [])].filter(Boolean), chips, grid);
+  CARDS.clear();
   for (const v of vis.filter(isOn)) {
-    const body = el("div"), card = el("section", { class: "card" + (v.wide ? " wide" : "") }, el("h3", {}, v.title), v.sub ? el("div", { class: "sub" }, v.sub) : null, body);
+    const body = el("div"), card = el("section", { class: "card" + (v.wide ? " wide" : "") + (v.cls ? " " + v.cls : "") }, el("h3", {}, v.title), v.sub ? el("div", { class: "sub" }, v.sub) : null, body);
     grid.append(card);
-    try { v.draw(body); } catch (e) { body.replaceChildren(el("div", { class: "err" }, "Not available: " + (e.message || e))); }
+    const ctx = { card }; CARDS.set(v.id, { v, body, ctx });
+    try { v.draw(body, ctx); } catch (e) { body.replaceChildren(el("div", { class: "err" }, "Not available: " + (e.message || e))); }
   }
   if (!vis.some(isOn)) grid.append(el("div", { class: "card wide muted" }, "Nothing selected. Pick visuals above."));
+  if (!same(S.overrides[car], S.applied[car])) schedulePreview();
 }
 
 // ------------------------------------------------------------------ loading files
@@ -545,6 +590,8 @@ function pending() {
   $("#reset").hidden = !n;
   $("#runbar").hidden = !dirty || S.busy;
   $("#runbar-text").textContent = n ? `${n} input${n === 1 ? "" : "s"} changed, results not updated` : "Inputs reset, results not updated";
+  const lv = $("#live"); if (lv) { lv.classList.toggle("on", S.live); lv.setAttribute("aria-pressed", S.live); }
+  schedulePreview();
 }
 async function runSim() {
   if (S.busy) return;
@@ -554,7 +601,7 @@ async function runSim() {
     const p = call("run", [car, ov]);
     const tick = setInterval(() => { if ($("#dot").classList.contains("busy") && worker) $("#status").textContent = $("#status").textContent.replace(/( \(\d+ s\))?$/, ` (${Math.round((performance.now() - t0) / 1000)} s)`); }, 1000);
     const r = await p.finally(() => clearInterval(tick));
-    S.data[car].result = r; S.applied[car] = ov;
+    S.data[car].result = r; S.applied[car] = ov; BLOCK_OV[car] = {};
     setStatus(`${car === "ic" ? "CT-17 IC" : "CT-17 EV"} simulated in your browser in ${((performance.now() - t0) / 1000).toFixed(1)} s` + (Object.keys(ov).length ? ` with ${Object.keys(ov).length} changed input(s)` : " (baseline inputs)"), "ok");
     if (S.car === car) render();
   } catch (e) { setStatus("Run failed: " + (e.message || e), "err"); }
@@ -581,7 +628,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   if (c === "ic" || c === "ev") S.car = c; if (PAGES.some((x) => x.id === p)) S.page = p;
   document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => { location.hash = `${b.dataset.car}/${S.page}`; setCar(b.dataset.car); }));
   $("#run").onclick = $("#run2").onclick = runSim;
-  $("#reset").onclick = () => { S.overrides[S.car] = {}; render(); pending(); };
+  $("#reset").onclick = () => { S.overrides[S.car] = {}; if (typeof FR !== "undefined") delete FR._w[S.car]; render(); pending(); };
+  $("#live").onclick = () => { S.live = !S.live; localStorage.setItem("lapsim.live", S.live ? "1" : "0"); pending(); };
   try { S.meta = await getJSON("data/meta.json"); } catch (e) { /* optional */ }
   $("#buildinfo").textContent = "© Haley Harper" + (S.meta.built ? `, Built ${S.meta.built}` : "");
   await setCar(S.car);
