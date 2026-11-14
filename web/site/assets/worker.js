@@ -1,7 +1,9 @@
 /* Runs the Python lap simulation (fsae_vd / fsae_pt / fsae_ev) in WebAssembly via Pyodide,
-   off the main thread so the page stays responsive. Messages: {id, fn, args} -> {id, ok, result}. */
+   off the main thread so the page stays responsive. Messages: {zip} once, then {id, fn, args} -> {id, ok, result}. */
 const PYODIDE = "https://cdn.jsdelivr.net/pyodide/v0.27.7/full/";
 const status = (text) => postMessage({ status: text });
+// the page sends the simulation bundle (py/lapsim.zip) as its first message: {zip: ArrayBuffer}
+let haveZip; const gotZip = new Promise((r) => { haveZip = r; });
 
 const ready = (async () => {
   status("Downloading the Python runtime…");
@@ -10,10 +12,9 @@ const ready = (async () => {
   status("Loading NumPy, SciPy and pandas…");
   await py.loadPackage(["numpy", "scipy", "pandas", "pyyaml"]);
   status("Loading the lap simulation…");
-  const res = await fetch("../py/lapsim.zip?v=" + (self.name || "0"));
-  if (!res.ok) throw new Error("lapsim.zip: HTTP " + res.status);
+  const zip = await gotZip;
   py.FS.mkdirTree("/lapsim");
-  py.unpackArchive(await res.arrayBuffer(), "zip", { extractDir: "/lapsim" });
+  py.unpackArchive(zip, "zip", { extractDir: "/lapsim" });
   py.runPython(`
 import os, sys, json
 os.environ["LAPSIM_HOME"] = "/lapsim"
@@ -27,6 +28,7 @@ import lapsim_web
 ready.catch((e) => postMessage({ fatal: String(e) }));
 
 onmessage = async (e) => {
+  if (e.data.zip) return haveZip(e.data.zip);
   const { id, fn, args } = e.data;
   try {
     const py = await ready;

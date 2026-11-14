@@ -10,6 +10,7 @@ What it writes:
     site/data/ic.json       baseline CT-17 IC inputs + results (shown the moment the page opens)
     site/data/ev.json       baseline CT-17 EV inputs + results + studies
     site/data/meta.json     build time, git commit, file list
+    site/**/*.js copies     the same files as scripts, so index.html also works opened by double-click
 
 The baseline results are computed FROM THE BUNDLE (unzipped to a temporary folder), so a build that
 succeeds proves the bundle holds every file the simulation needs.
@@ -100,6 +101,22 @@ for car in ("ic", "ev"):
                        cwd=str(Path(tmp) / "IC"))
 
 
+def script_copies():
+    """Each file the page reads, again as a script that registers it in window.__LAPSIM: these load from a page
+    opened straight from disk (file://), where browsers block fetch() and file workers."""
+    import base64
+    def write(path, key, js_value):
+        path.write_text(f"(window.__LAPSIM=window.__LAPSIM||{{}})[{json.dumps(key)}]={js_value};\n")
+    for name in ("ic", "ev", "meta"):
+        f = SITE / "data" / f"{name}.json"
+        if f.exists():
+            write(f.with_suffix(".js"), f"data/{name}.json", json.dumps(json.loads(f.read_text()), separators=(",", ":"), allow_nan=False))
+    z = SITE / "py" / "lapsim.zip"
+    write(SITE / "py" / "lapsim.zip.js", "py/lapsim.zip", json.dumps(base64.b64encode(z.read_bytes()).decode()))
+    w = SITE / "assets" / "worker.js"
+    write(SITE / "assets" / "worker.js.js", "assets/worker.js", json.dumps(w.read_text()))
+
+
 def git_commit():
     try:
         return subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, capture_output=True, text=True).stdout.strip()
@@ -127,6 +144,7 @@ def main():
             "bundle_kB": round(z.stat().st_size / 1e3), "files": [_rel(f) for f in files]}
     (SITE / "data" / "meta.json").write_text(json.dumps(meta, indent=1))
     (SITE / ".nojekyll").write_text("")
+    script_copies()
     print(f"site: {SITE}")
     if a.serve:
         import functools

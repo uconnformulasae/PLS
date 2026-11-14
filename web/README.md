@@ -15,6 +15,9 @@ LAPSIM_ROOT=/path/to/fsae_lapsim python web/build.py --serve      # build, then 
 | `build.py` | Zips the simulation packages, configs and track files into `site/py/lapsim.zip`, then runs both cars **from that zip** to write the baseline `site/data/*.json`. |
 | `site/` | The website: `index.html`, `assets/app.css`, `assets/app.js`, `assets/worker.js`. This folder is what gets published. |
 
+`site/index.html` also works opened by double-click (no server): `build.py` writes a script copy of every data file
+for that case. Running a simulation still needs the internet the first time, to download the Python runtime.
+
 The page opens on the pre-computed baseline, so it is instant on a phone. Pressing **Run simulation**
 starts Pyodide (Python in WebAssembly) in a web worker and runs the real model with the edited inputs.
 The browser result for the baseline is identical to the native one.

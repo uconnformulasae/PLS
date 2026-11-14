@@ -470,22 +470,73 @@ function render() {
   if (!vis.some(isOn)) grid.append(el("div", { class: "card wide muted" }, "Nothing selected. Pick visuals above."));
 }
 
+// ------------------------------------------------------------------ loading files
+/* Served over http(s) the page fetches its files. Opened straight from disk (file://) browsers block fetch and
+   file workers, so build.py also writes every file as a small script (ic.json -> ic.js ...) that registers itself
+   in window.__LAPSIM, and those are loaded with a <script> tag instead. ?nofetch=1 forces that path (for testing). */
+const NOFETCH = location.protocol === "file:" || /[?&]nofetch=1/.test(location.search);
+const ver = () => encodeURIComponent(S.meta.built || "");
+function viaScript(path) {
+  const reg = (window.__LAPSIM = window.__LAPSIM || {});
+  if (path in reg) return Promise.resolve(reg[path]);
+  return new Promise((resolve, reject) => {
+    const sc = el("script", { src: path.replace(/\.\w+$/, (x) => (x === ".json" ? ".js" : x + ".js")) + "?v=" + ver() });
+    sc.onload = () => (path in reg ? resolve(reg[path]) : reject(new Error(path + ": file is empty")));
+    sc.onerror = () => reject(new Error(`${path} is missing. Rebuild the site: python web/build.py`));
+    document.head.append(sc);
+  });
+}
+async function getJSON(path) {
+  if (!NOFETCH) {
+    try { const r = await fetch(`${path}?v=${ver()}`); if (r.ok) return await r.json(); } catch (e) { /* fall through to the script copy */ }
+  }
+  return viaScript(path);
+}
+async function getBytes(path) {
+  if (!NOFETCH) {
+    try { const r = await fetch(`${path}?v=${ver()}`); if (r.ok) return await r.arrayBuffer(); } catch (e) { /* fall through */ }
+  }
+  const b64 = await viaScript(path), bin = atob(b64), out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out.buffer;
+}
+async function makeWorker() {
+  if (!NOFETCH) { try { return new Worker("assets/worker.js"); } catch (e) { /* fall through */ } }
+  const src = await viaScript("assets/worker.js");
+  return new Worker(URL.createObjectURL(new Blob([src], { type: "text/javascript" })));
+}
+
 // ------------------------------------------------------------------ engine (Pyodide worker)
 let worker = null, seq = 0; const waiting = new Map();
 function setStatus(text, state = "") { $("#status").textContent = text; $("#dot").className = "dot " + state; }
-function call(fn, args) {
-  if (!worker) {
-    worker = new Worker("assets/worker.js", { name: String(S.meta.built || Date.now()).replace(/\W/g, "") });
-    worker.onmessage = (e) => {
+let starting = null;
+function startWorker() {
+  return (starting = starting || (async () => {
+    const w = await makeWorker();
+    w.onmessage = (e) => {
       const m = e.data;
-      if (m.status) { if (m.status !== "ready") setStatus(m.status, "busy"); return; }
-      if (m.fatal) { setStatus("The simulation engine could not start: " + m.fatal, "err"); for (const w of waiting.values()) w.reject(new Error(m.fatal)); waiting.clear(); worker = null; return; }
-      const w = waiting.get(m.id); if (!w) return; waiting.delete(m.id);
-      m.ok ? w.resolve(JSON.parse(m.result)) : w.reject(new Error(m.error.split("\n").filter(Boolean).pop()));
+      if (m.status) { setStatus(m.status === "ready" ? "Running the simulation…" : m.status, "busy"); return; }
+      if (m.fatal) return engineFailed(m.fatal);
+      const p = waiting.get(m.id); if (!p) return; waiting.delete(m.id);
+      m.ok ? p.resolve(JSON.parse(m.result)) : p.reject(new Error(m.error.split("\n").filter(Boolean).pop()));
     };
-    worker.onerror = (e) => { setStatus("Engine error: " + e.message, "err"); };
-  }
-  return new Promise((resolve, reject) => { const id = ++seq; waiting.set(id, { resolve, reject }); worker.postMessage({ id, fn, args }); });
+    w.onerror = (e) => engineFailed(e.message || "the worker could not be loaded");
+    const zip = await getBytes("py/lapsim.zip");
+    w.postMessage({ zip }, [zip]);
+    return (worker = w);
+  })());
+}
+function engineFailed(why) {
+  const offline = !navigator.onLine ? " You appear to be offline: the first run needs the internet to download the Python runtime." : "";
+  setStatus("The simulation engine could not start: " + why + "." + offline, "err");
+  for (const p of waiting.values()) p.reject(new Error(why)); waiting.clear();
+  if (worker) worker.terminate(); worker = null; starting = null;
+}
+function call(fn, args) {
+  return new Promise((resolve, reject) => {
+    const id = ++seq; waiting.set(id, { resolve, reject });
+    startWorker().then((w) => w.postMessage({ id, fn, args }), (e) => { waiting.delete(id); starting = null; reject(e); });
+  });
 }
 const same = (a, b) => JSON.stringify(Object.entries(a).sort()) === JSON.stringify(Object.entries(b).sort());
 function pending() {
@@ -511,14 +562,19 @@ async function runSim() {
 }
 
 async function loadCar(car) {
-  if (!S.data[car]) {
-    const r = await fetch(`data/${car}.json?v=${encodeURIComponent(S.meta.built || "")}`);
-    if (!r.ok) throw new Error(`data/${car}.json: HTTP ${r.status}`);
-    S.data[car] = await r.json(); S.base[car] = S.data[car].result;
-  }
+  if (!S.data[car]) { S.data[car] = await getJSON(`data/${car}.json`); S.base[car] = S.data[car].result; }
   setStatus(Object.keys(S.applied[car]).length ? "Showing your last run" : "Showing the baseline (pre-computed). Change inputs and run to simulate in your browser.", "ok");
 }
-async function setCar(car) { S.car = car; render(); try { await loadCar(car); } catch (e) { setStatus(String(e.message || e), "err"); } render(); pending(); }
+async function setCar(car) {
+  S.car = car; render();
+  try { await loadCar(car); } catch (e) {
+    setStatus("Could not load the results: " + (e.message || e), "err");
+    $("#main").replaceChildren(el("div", { class: "card wide prose", html: `<h3>The site's data did not load</h3>
+<p>${String(e.message || e)}</p><p>From the <code>fsae_lapsim</code> folder run <code>python web/build.py --serve</code> and open <code>http://localhost:8000</code>.</p>` }));
+    return;
+  }
+  render(); pending();
+}
 
 window.addEventListener("DOMContentLoaded", async () => {
   const [c, p] = location.hash.slice(1).split("/");
@@ -526,7 +582,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => { location.hash = `${b.dataset.car}/${S.page}`; setCar(b.dataset.car); }));
   $("#run").onclick = $("#run2").onclick = runSim;
   $("#reset").onclick = () => { S.overrides[S.car] = {}; render(); pending(); };
-  try { S.meta = await (await fetch("data/meta.json", { cache: "no-cache" })).json(); } catch (e) { /* optional */ }
+  try { S.meta = await getJSON("data/meta.json"); } catch (e) { /* optional */ }
   $("#buildinfo").textContent = S.meta.built ? `Built ${S.meta.built}${S.meta.commit ? " · " + S.meta.commit : ""}` : "";
   await setCar(S.car);
   window.addEventListener("hashchange", () => {
