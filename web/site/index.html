@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000E2F">
+<meta name="description" content="UConn Formula SAE predictive lap simulation: CT-17 IC and CT-17 EV, every subsystem, interactive.">
+<title>UConn FSAE · Predictive Lap Simulation</title>
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <!-- TEAM LOGO: replace assets/logo.svg with the team's mark (see web/README.md) -->
+    <img src="assets/logo.svg" alt="" class="logo" width="38" height="38">
+    <div class="brand-text">
+      <span class="team">UConn Formula SAE</span>
+      <span class="product">Predictive Lap Simulation</span>
+    </div>
+  </div>
+  <div class="top-controls">
+    <div class="seg" role="tablist" aria-label="Car">
+      <button role="tab" data-car="ic" class="on">CT-17 IC</button>
+      <button role="tab" data-car="ev">CT-17 EV</button>
+    </div>
+    <button id="run" class="btn primary" title="Run the simulation with the current inputs">Run simulation</button>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs" aria-label="Subsystems"></nav>
+
+<div class="statusbar" id="statusbar">
+  <span class="dot" id="dot"></span>
+  <span id="status">Loading baseline…</span>
+  <span class="spacer"></span>
+  <span id="changes" class="changes" hidden></span>
+  <button id="reset" class="btn ghost small" hidden>Reset inputs</button>
+</div>
+
+<main id="main"></main>
+
+<footer class="foot">
+  <span id="buildinfo"></span>
+  <span>Simulation runs in your browser. Nothing you enter leaves this device.</span>
+</footer>
+
+<div class="runbar" id="runbar" hidden>
+  <span id="runbar-text"></span>
+  <button class="btn primary" id="run2">Run simulation</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js" defer></script>
+<script src="assets/app.js" defer></script>
+</body>
+</html>
