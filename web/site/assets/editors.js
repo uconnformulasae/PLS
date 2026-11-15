@@ -137,7 +137,7 @@ function viewEditor(o) {
   }
   function select(id) { const changed = selected !== id; selected = id; if (changed) draw(); if (o.onSelect && id != null) o.onSelect(id); }
   requestAnimationFrame(() => { fit(); draw(); });
-  const ro = new ResizeObserver(() => { if (views[0].bounds) draw(); }); ro.observe(root);
+  const ro = new ResizeObserver(() => { if (!root.isConnected || !S.data[S.car]) return; if (views[0].bounds) draw(); }); ro.observe(root);      // a figure that has left the page does nothing
   return { node: root, draw, fit: () => { fit(); draw(); }, select, get selected() { return selected; } };
 }
 /* Coordinate boxes for the selected point (mm). */
@@ -400,7 +400,7 @@ V("chassis", "frame_sizes", "Tube sizes", "Each stock size used in the frame. Ch
         el("td", {}, stt.sizes[k].mass.toFixed(2)), el("td", {}, (1e3 * tubeArea(z) * (st.materials[z.material] || {}).density).toFixed(0)));
     });
     wrap.replaceChildren(el("div", { class: "tablewrap" }, el("table", { class: "edit" },
-      el("thead", {}, el("tr", {}, ["#", "section", "outer size [mm]", "radius [mm]", "wall [mm]", "material", "tubes", "total length [m]", "mass [kg]", "g per m"].map((h) => el("th", {}, h)))), el("tbody", {}, rows))),
+      el("thead", {}, el("tr", {}, ["#", "section", "outer size [mm]", "radius [mm]", "wall [mm]", "material", "tubes", "total length [m]", "mass [kg]", "mass per metre [g/m]"].map((h) => el("th", {}, h)))), el("tbody", {}, rows))),
       el("div", { class: "ctl" }, el("button", { class: "btn small", onclick: () => { st.sizes.push({ shape: "round", od: 0.0254, wall: 0.0009, material: "4130 steel" }); frameCommit(true); } }, "Add a size"),
         el("span", { class: "muted" }, "Total length scales every tube of that size about its first node. Single tube lengths are in the Tubes table.")));
   };
@@ -419,10 +419,10 @@ V("chassis", "frame_mats", "Materials", "Stiffness and density used by the beam 
   ctx.local = () => {
     const st = FR.state, used = new Set(st.sizes.map((z) => z.material));
     const rows = Object.entries(st.materials).map(([name, m]) => el("tr", {}, el("td", {}, name),
-      el("td", {}, numIn(m.E / 1e9, (v) => { m.E = v * 1e9; frameCommit(true); }, { min: 1, style: "width:84px" })), el("td", {}, numIn(m.G / 1e9, (v) => { m.G = v * 1e9; frameCommit(true); }, { min: 0.5, style: "width:84px" })),
-      el("td", {}, numIn(m.density, (v) => { m.density = v; frameCommit(true); }, { min: 100, style: "width:90px" })), el("td", {}, (m.E / m.density / 1e6).toFixed(1)), el("td", {}, used.has(name) ? "in use" : "")));
+      el("td", {}, numIn(m.E / 1e9, (v) => { m.E = v * 1e9; frameCommit(true); }, { min: 1, style: "width:66px" })), el("td", {}, numIn(m.G / 1e9, (v) => { m.G = v * 1e9; frameCommit(true); }, { min: 0.5, style: "width:66px" })),
+      el("td", {}, numIn(m.density, (v) => { m.density = v; frameCommit(true); }, { min: 100, style: "width:74px" })), el("td", {}, (m.E / m.density / 1e6).toFixed(1)), el("td", {}, used.has(name) ? "in use" : "")));
     const nm = el("input", { type: "text", placeholder: "New material name", style: "width:190px" });
-    wrap.replaceChildren(el("div", { class: "tablewrap" }, el("table", { class: "edit" }, el("thead", {}, el("tr", {}, ["material", "E [GPa]", "G [GPa]", "density [kg/m³]", "E / density [MN·m/kg]", ""].map((h) => el("th", {}, h)))), el("tbody", {}, rows))),
+    wrap.replaceChildren(el("div", { class: "tablewrap" }, el("table", { class: "edit" }, el("thead", {}, el("tr", {}, ["material", "E [GPa]", "G [GPa]", "density [kg/m³]", "E/ρ [MN·m/kg]", ""].map((h) => el("th", {}, h)))), el("tbody", {}, rows))),
       el("div", { class: "ctl" }, nm, el("button", { class: "btn small", onclick: () => { const n = nm.value.trim(); if (!n || st.materials[n]) return; st.materials[n] = { E: 205e9, G: 80e9, density: 7850 }; frameCommit(true); } }, "Add material")));
   };
   b.append(wrap); ctx.local();
@@ -742,9 +742,9 @@ V("aero", "airfoil", "Wing elements, one at a time", "F1 to F3 and R1 to R4, eac
       el("label", {}, "angle [deg] ", numIn(c.angle, (v) => { c.angle = v; solve(); }, { min: -20, max: 60, style: "width:76px" })), el("label", {}, "speed [m/s] ", numIn(c.speed, (v) => { c.speed = v; solve(); }, { min: 1, max: 60, style: "width:76px" })),
       el("button", { class: "btn small navy", onclick: () => { c.coords = paste.value.trim(); solve(); } }, "Solve"), el("details", { style: "flex:1 1 100%" }, el("summary", { class: "muted", style: "cursor:pointer" }, "Or paste a section's coordinates (for example a published FX, GOE or AH file)"), paste));
   };
-  controls(); show(); table8();
   b.append(ctl, out, el("div", { class: "sub", style: "margin-top:10px" }, "Every element, each on its own"), tabl,
     el("div", { class: "note warn" }, "Read these as section properties, not installed loads. The method is inviscid: no stall and no drag, so lift keeps rising with angle; a flap alone at 40 to 60 degrees would be stalled, so its number here only means something inside its stack (next card). " + (els[0].source === "cad" ? "Shapes, chords and angles are cut from the wing CAD." : "The CAD sections are not in this build: these are the NACA stand-ins from the CFD config.")));
+  controls(); show(); table8();          // after the card is on the page, so the charts size to it
 }, { wide: true });
 
 // ------------------------------------------------------------------ drivers
@@ -800,9 +800,9 @@ function driverHoops() {
 }
 V("drivers", "driver_pick", "Driver in the car", "Pick a driver for this car. Their numbers go into the full car simulation: press Run simulation after choosing.", (b) => {
   const data = DR.load(), d = DR.chosen(), wrap = el("div"); b.append(wrap);
-  const F = [["name", "Name", "", "text"], ["mass_kg", "Mass with race gear", "kg"], ["stature_mm", "Standing height", "mm"], ["eye_height_mm", "Eye above the seat reference, along the back", "mm"],
-    ["head_top_mm", "Helmet top above the seat reference, along the back", "mm"], ["chest_depth_mm", "Chest depth", "mm"], ["cg_above_seat_mm", "Body CG above the seat reference", "mm"],
-    ["grip_used_pct", "Grip the driver uses of what the tires have", "%"], ["upshift_ms", "Upshift time (IC car)", "ms"], ["endurance_power_kW", "Endurance power limit they drive to (EV)", "kW"], ["notes", "Notes", "", "text"]];
+  const F = [["name", "Name", "", "text"], ["mass_kg", "Mass with race gear", "kg"], ["stature_mm", "Standing height", "mm"], ["eye_height_mm", "Eye above the seat point", "mm"],
+    ["head_top_mm", "Helmet top above the seat point", "mm"], ["chest_depth_mm", "Chest depth", "mm"], ["cg_above_seat_mm", "Body CG above the seat point", "mm"],
+    ["grip_used_pct", "Share of the tires' grip used", "%"], ["upshift_ms", "Upshift time (IC)", "ms"], ["endurance_power_kW", "Endurance power limit (EV)", "kW"], ["notes", "Notes", "", "text"]];
   const sel = el("select", { "aria-label": "Driver", onchange: () => { DR.choose(sel.value); render(); } }, data.drivers.map((x) => el("option", { value: x.id }, x.name))); sel.value = d.id;
   const form = el("div", { class: "dform" }, F.map(([k, label, unit, type]) => { const i = el("input", { type: type || "number", step: "any", value: d[k] ?? "", placeholder: "not measured", "aria-label": label });
     i.addEventListener("change", () => { d[k] = type === "text" ? i.value : i.value === "" ? null : +i.value; DR.save(); DR.apply(); if (k === "name") render(); else { const c = CARDS.get("driver_view"); if (c) c.ctx.local(); const e = CARDS.get("driver_effect"); if (e) e.ctx.local(); } });
@@ -813,7 +813,7 @@ V("drivers", "driver_pick", "Driver in the car", "Pick a driver for this car. Th
     el("button", { class: "btn small", onclick: () => { const a = el("a", { href: URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: "application/json" })), download: "drivers.json" }); a.click(); } }, "Export drivers.json"),
     el("label", { class: "btn small" }, "Import", el("input", { type: "file", accept: ".json", hidden: true, onchange: async (e) => { try { const j = JSON.parse(await e.target.files[0].text()); if (!j.drivers) throw new Error("no drivers in that file"); DR.data = j; DR.save(); render(); } catch (err) { alert("Could not read that file: " + err.message); } } })),
     el("button", { class: "btn small", onclick: () => { if (!confirm("Forget the driver edits made in this browser and go back to the site's drivers.json?")) return; localStorage.removeItem("lapsim.drivers"); DR.data = null; DR.choose("design"); render(); } }, "Reset to the site's list")),
-    form, el("div", { class: "sub" }, d.id === "design" ? "The design driver is the one the car configs assume: choosing it changes nothing. Its mass comes from the car config." : "Edits are kept in this browser. Export drivers.json and replace web/drivers.json in the repository to share them with the team."));
+    form, el("div", { class: "sub" }, d.id === "design" ? "The design driver is the one the car configs assume: choosing it changes nothing. Its mass comes from the car config." : "Measurements are along the seat back from the seat reference point (the hip). Edits are kept in this browser. Export drivers.json and replace web/drivers.json in the repository to share them with the team."));
 }, { wide: true, first: true });
 V("drivers", "driver_effect", "What this driver changes in the car", "The inputs set by the chosen driver, next to the baseline.", (b, ctx) => {
   const wrap = el("div"); b.append(wrap);

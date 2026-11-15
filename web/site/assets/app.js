@@ -43,7 +43,20 @@ const mmss = (t) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0"
 const R = () => S.data[S.car].result;
 const SUB = () => R().subsystems || {};
 const lap = (ev = S.event) => (R().laps[ev] && !R().laps[ev].error ? R().laps[ev] : null);
-const pretty = (k) => k.replace(/_/g, " ");
+/* A readable name for a channel or column: underscores out, a trailing unit moved into brackets
+   ("lap_time_s" -> "lap time [s]", "v_at_rev_limit_kph" -> "v at rev limit [km/h]"). */
+const UNIT_SUFFIX = [["_Wh_per_km", "Wh/km"], ["_N_per_m", "N/m"], ["_g_kWh", "g/kWh"], ["_g_s", "g/s"], ["_kph", "km/h"], ["_kWh", "kWh"], ["_MPa", "MPa"], ["_kPa", "kPa"], ["_kW", "kW"], ["_MJ", "MJ"], ["_kJ", "kJ"],
+  ["_Nm", "N·m"], ["_mm", "mm"], ["_kg", "kg"], ["_deg", "deg"], ["_bar", "bar"], ["_pct", "%"], ["_%", "%"], ["_C", "°C"], ["_V", "V"], ["_A", "A"], ["_W", "W"], ["_N", "N"], ["_L", "L"], ["_s", "s"], ["_g", "g"]];
+const CH_UNITS = { v: "m/s", ax: "m/s²", ay: "m/s²", s: "m", t: "s", rpm: "rpm", motor_rpm: "rpm", max_rpm: "rpm", max_motor_rpm: "rpm", motor_torque: "N·m", motor_torque_max: "N·m", regen_torque_max: "N·m", T_crank: "N·m", T_crank_wot: "N·m",
+  Fz_fo: "N", Fz_fi: "N", Fz_ro: "N", Fz_ri: "N", F_drive: "N", F_regen: "N", F_brake_front: "N", F_brake_rear: "N", F_rear_inner: "N", F_rear_outer: "N", chain_tension: "N", I_pack: "A", I_phase: "A", I_cell: "A", V_pack: "V", V_cell: "V",
+  T_halfshaft_inner: "N·m", T_halfshaft_outer: "N·m", T_countershaft: "N·m", axle_torque: "N·m", diff_Mz: "N·m", camber_fo: "deg", camber_fi: "deg", camber_ro: "deg", camber_ri: "deg", damper_fo: "m", damper_fi: "m", damper_ro: "m", damper_ri: "m" };
+const pretty = (k) => {
+  k = String(k);
+  if (/\[.*\]/.test(k)) return k.replace(/_/g, " ");
+  if (CH_UNITS[k]) return `${k.replace(/_/g, " ")} [${CH_UNITS[k]}]`;
+  for (const [suf, u] of UNIT_SUFFIX) if (k.length > suf.length && k.endsWith(suf)) return `${k.slice(0, -suf.length).replace(/_/g, " ")} [${u}]`;
+  return k.replace(/_/g, " ");
+};
 
 // ------------------------------------------------------------------ pages
 const PAGES = [
@@ -59,7 +72,7 @@ const PAGES = [
   { id: "tires", label: "Tires & grip", groups: ["tires"], lap: true, intro: "The grip envelope the lap solver drives on, and the wheel loads behind it." },
   { id: "suspension", label: "Suspension", groups: ["suspension"], lap: true, intro: "Kinematics solved from the hardpoints, rates and roll stiffness, and body attitude around the lap." },
   { id: "aero", label: "Aero", groups: ["aero"], intro: "Downforce, drag and balance from the component aero model at the aero-loaded ride height." },
-  { id: "brakes", label: "Brakes", groups: ["brakes"], lap: true, intro: "Brake balance against the ideal split, and brake force and power around the lap." },
+  { id: "brakes", label: "Brakes", groups: ["brakes"], lap: true, intro: "Brake balance against the ideal split, rotor temperatures, and the corner hardware." },
   { id: "chassis", label: "Chassis & frame", groups: ["chassis"], intro: "Mass, geometry and the spaceframe tube model." },
   { id: "studies", label: "Studies", intro: "Sweep any input and see what it does to each event. Studies run in your browser." },
   { id: "inputs", label: "All inputs", intro: "Every input of the model. Values are SI unless you type a unit, e.g. 350 lbf/in, 11 in, 80 kW." },
@@ -79,7 +92,10 @@ function plot(node, traces, layout = {}) {
   for (const k of Object.keys(L)) if (/^[xy]axis\d*$/.test(k)) L[k] = axis(L[k]);
   if (!L.xaxis) L.xaxis = axis(); if (!L.yaxis) L.yaxis = axis();
   if (L.showlegend) L.margin = Object.assign({}, L.margin, { t: traces.length > 4 || window.innerWidth < 600 ? 50 : 28 });
-  return Plotly.react(node, traces, L, { responsive: true, displaylogo: false, displayModeBar: false, scrollZoom: false });
+  const done = Plotly.react(node, traces, L, { responsive: true, displaylogo: false, displayModeBar: false, scrollZoom: false });
+  // a chart drawn before its card is on the page takes Plotly's default size: fit it once it is there
+  if (!node.isConnected || !node.clientWidth) setTimeout(() => { if (node.isConnected && node.clientWidth) Plotly.Plots.resize(node); }, 40);
+  return done;
 }
 const line = (x, y, name, extra = {}) => Object.assign({ x, y, name, mode: "lines", line: { width: 2 }, hovertemplate: "%{y:.4~g}<extra>" + name + "</extra>" }, extra);
 const plotDiv = (cls = "") => el("div", { class: "plot " + cls });
@@ -105,10 +121,11 @@ function lapStack(node, groups, { ev = S.event, xKey = "s", scale = {} } = {}) {
   if (!groups.length) return node.replaceWith(el("div", { class: "muted" }, "These channels are not produced for this car."));
   const n = groups.length, traces = [], layout = { grid: { rows: n, columns: 1, pattern: "independent" }, showlegend: groups.some((g) => g.length > 1) };
   const gap = 0.06, h = (1 - gap * (n - 1)) / n;
+  let colour = 0;                                          // a series keeps its own colour in the shared legend
   groups.forEach((g, i) => {
     const ax = i === 0 ? "" : String(i + 1);
-    g.forEach((k, j) => traces.push(line(c[xKey], scale[k] ? c[k].map((v) => v * scale[k]) : c[k], pretty(k), {
-      xaxis: "x" + ax, yaxis: "y" + ax, line: { width: 1.8, color: g.length > 1 ? PAL[j % PAL.length] : PAL[0] }, showlegend: g.length > 1 })));
+    g.forEach((k) => traces.push(line(c[xKey], scale[k] ? c[k].map((v) => v * scale[k]) : c[k], pretty(k), {
+      xaxis: "x" + ax, yaxis: "y" + ax, line: { width: 1.8, color: g.length > 1 ? PAL[colour++ % PAL.length] : PAL[0] }, showlegend: g.length > 1 })));
     const top = 1 - i * (h + gap);
     layout["yaxis" + ax] = { domain: [Math.max(0, top - h), top], title: g.length === 1 ? pretty(g[0]) : "" };
     layout["xaxis" + ax] = { anchor: "y" + ax, matches: i ? "x" : undefined, showticklabels: i === n - 1, title: i === n - 1 ? (xKey === "s" ? "distance [m]" : "time [s]") : "" };
@@ -228,7 +245,8 @@ V("powertrain", "tractive", "Tractive force by gear", "Wheel force at wide-open 
 }, { car: "ic" });
 V("powertrain", "gears", "Gearbox", "Ratios, speed at the rev limit and rotating mass per gear.", (b) => {
   const g = need(SUB().powertrain).gears, cols = Object.keys(g[0]);
-  b.append(table({ columns: cols, rows: g.map((r) => cols.map((c) => r[c])) }), el("div", { class: "sub" }, "Engine: " + Object.entries(SUB().powertrain.engine_summary).filter(([, v]) => v != null).map(([k, v]) => `${pretty(k)} ${fmt(v)}`).join(" · ")));
+  b.append(table({ columns: cols, rows: g.map((r) => cols.map((c) => r[c])) }), el("div", { class: "sub", style: "margin-top:8px" }, ((e) => `Engine: peak torque ${fmt(e.peak_torque_Nm, 3)} N·m at ${fmt(e.at_rpm)} rpm · peak power ${fmt(e.peak_power_kW, 3)} kW (${fmt(e.peak_power_hp, 3)} hp) at ${fmt(e.at_rpm_power)} rpm`
+      + (e.restrictor_choked_flow_g_s != null ? ` · restrictor chokes at ${fmt(e.restrictor_choked_flow_g_s, 3)} g/s` : "") + (e.min_bsfc_g_kWh != null ? ` · best fuel consumption ${fmt(e.min_bsfc_g_kWh, 3)} g/kWh` : ""))(SUB().powertrain.engine_summary)));
 }, { car: "ic" });
 V("powertrain", "pt_lap_ic", "Engine around the lap", "", (b) => { const p = plotDiv(); b.append(p); lapStack(p, [["rpm"], ["gear"], ["throttle"], ["P_engine_kW"]]); }, { car: "ic", wide: true });
 V("powertrain", "loss_ic", "Driveline losses", "Where power is lost between crank and tire.", (b) => { const p = plotDiv(); b.append(p);
@@ -565,6 +583,11 @@ function render() {
     const ctx = { card }; CARDS.set(v.id, { v, body, ctx });
     try { v.draw(body, ctx); } catch (e) { body.replaceChildren(el("div", { class: "err" }, "Not available: " + (e.message || e))); }
   }
+  // a half-width card left alone on its row (next card is full width, or it is the last) takes the whole row
+  { const cards = [...grid.children]; let col = 0;
+    cards.forEach((c, i) => { if (c.classList.contains("wide")) { col = 0; return; }
+      if (col === 0 && (!cards[i + 1] || cards[i + 1].classList.contains("wide"))) { c.classList.add("wide"); const pl = c.querySelectorAll(".js-plotly-plot"); setTimeout(() => pl.forEach((n) => n.isConnected && Plotly.Plots.resize(n)), 60); return; }
+      col = 1 - col; }); }
   if (!vis.some(isOn)) grid.append(el("div", { class: "card wide muted" }, "Nothing selected. Pick visuals above."));
   if (!same(S.overrides[car], S.applied[car])) schedulePreview();
 }

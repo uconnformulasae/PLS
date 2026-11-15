@@ -243,3 +243,19 @@ textarea { border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; 
 
 .plot.cfd3d { height: 520px; border: 1px solid var(--line-2); border-radius: 8px; overflow: hidden; }
 @media (max-width: 600px) { .plot.cfd3d { height: 360px; } }
+
+.grid.inner > * { min-width: 0; }
+
+/* ---------- formatting sweep */
+.quick { grid-template-columns: minmax(0, 1.7fr) minmax(80px, 1fr) auto; }
+.qlabel span:first-child { line-height: 1.25; }
+.dform { align-items: end; }
+.dform label { align-items: end; line-height: 1.25; }
+.channels { max-height: 126px; -webkit-mask-image: linear-gradient(#000 calc(100% - 18px), transparent); mask-image: linear-gradient(#000 calc(100% - 18px), transparent); padding-bottom: 14px; }
+.card h3 + .ctl { margin-top: 8px; }
+.card .tablewrap + .sub, .card .plot + .sub { margin-top: 8px; }
+th { white-space: normal; min-width: 64px; vertical-align: bottom; line-height: 1.25; } th:first-child { min-width: 0; }
+table.edit th { white-space: nowrap; }
+.kpi .v { overflow-wrap: anywhere; }
+@media (max-width: 600px) { .quick { grid-template-columns: 1fr; } }
+.dform { grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); }
