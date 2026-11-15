@@ -95,6 +95,11 @@ def export(run: Path, faces_ref):
     m = res.meta
     motion = VehicleMotion(**{k: (tuple(v) if isinstance(v, list) else v) for k, v in m["motion"].items()})
     res.geom = build_car(str(IC / "configs" / "ct17_cfd.yaml"), motion.attitude())
+    gone = sorted(set(m.get("labels", [])) - {p.name for p in res.geom.parts})
+    if gone:                                              # the car config has changed since this run was solved
+        print(f"  SKIPPED {run.name}: it was solved with parts that are no longer in configs/ct17_cfd.yaml ({', '.join(gone[:4])}"
+              f"{' ...' if len(gone) > 4 else ''}). Re-solve it:  python tools/cfd_lapsim.py --stage cfd --resolution {m['resolution']}")
+        return faces_ref, None
     verts, faces, cps, groups, n0, f0 = [], [], [], {}, 0, 0
     parts = sorted(post.surface_pressure(res), key=lambda pc: pc[0].group)          # one block of faces per group
     for p, cp in parts:
@@ -141,10 +146,14 @@ def main():
     print(f"exporting {len(runs)} run(s) -> {OUT}")
     for r in runs:
         F, row = export(r, faces)
+        if row is None:
+            continue
         if faces is None:
             faces = F
             (OUT / "faces.json").write_text(json.dumps({"faces": F.ravel().tolist()}, separators=(",", ":")))
         index.append(row)
+    if not index:
+        sys.exit("nothing exported: the files already in web/site/data/cfd were left as they are")
     (OUT / "index.json").write_text(json.dumps({"cases": index}, indent=1))
 
 
