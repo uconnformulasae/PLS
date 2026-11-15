@@ -495,7 +495,7 @@ async function doPreview() {
 
 // ------------------------------------------------------------------ render
 function about() {
-  const m = S.meta, go = (id) => { S.page = id; location.hash = `${S.car}/${id}`; render(); window.scrollTo(0, 0); };
+  const go = (id) => { S.page = id; location.hash = `${S.car}/${id}`; render(); window.scrollTo(0, 0); };
   const GUIDE = [["overview", "Run the whole car on acceleration, skidpad, autocross and endurance. Start here for lap times and points."],
     ["drivers", "Pick who is driving: mass, seating position, sight line, and their personal grip and shift numbers."],
     ["lap", "Plot any channel the simulation produces along any event."],
@@ -510,25 +510,30 @@ function about() {
     ["inputs", "Every input of the model in one searchable list."]];
   const cards = GUIDE.map(([id, text]) => { const p = PAGES.find((x) => x.id === id);
     return el("button", { class: "guide", onclick: () => go(id) }, el("b", {}, val(p.label)), el("span", {}, text)); });
+  // The wording of this page is Haley's (edited in the GitHub clone): keep it when changing the layout.
   return [el("div", { class: "card wide prose", html: `
-<h3>What this is</h3>
-<p>The team's predictive lap simulation for the CT-17 IC and CT-17 EV. Pick the car at the top right, then a section. Every page opens on the baseline results.
-Change anything (a slider, a number, a dragged point) and press <b>Run simulation</b>: the same Python model the notebooks use runs inside your browser.
-With <b>Live preview</b> on, a page's own curves follow your changes without running the lap.</p>` }),
-    el("div", { class: "card wide" }, el("h3", {}, "Sections"), el("div", { class: "guides" }, cards)),
+<h3>WHAT IS THIS?</h3>
+<p>A website interface for a custom, UConn Formula SAE predictive lap simulation for the design of both the IC and EV cars, with CT-17 IC and CT-17 EV as the baseline. The page opens with these baseline results already computed.
+When you change an input and press <b>Run simulation</b>, the same Python model the notebooks use (<code>fsae_vd</code>, <code>fsae_pt</code>, <code>fsae_ev</code>) runs inside your browser.
+The first run downloads the Python runtime (about 40 MB, cached afterwards) and takes longer than the ones after it.</p>` }),
+    el("div", { class: "card wide" }, el("h3", {}, "SECTIONS"), el("div", { class: "guides" }, cards)),
     el("div", { class: "card wide prose", html: `
-<h3>What runs here</h3>
-<ul><li>Quasi-steady-state four-wheel vehicle model, tire and traction envelope, hard-point kinematics, component aero model.</li>
+<h3>WHAT RUNS HERE?</h3>
+<ul><li>Quasi-steady-state four-wheel vehicle model, tire and traction envelope, hardpoint kinematics, component aero model.</li>
 <li>IC powertrain: restricted engine, gearbox, chain, differential, cooling, fuel. EV powertrain: motor, inverter, accumulator, regen.</li>
 <li>All four dynamic events, endurance lap by lap, input sweeps, and the EV power-limit and gearing studies.</li>
-<li>The spaceframe beam model, suspension kinematics, rotor temperatures, and a panel-method model of single wing sections.</li></ul>
-<h3>What does not run in a browser</h3>
-<ul><li>Multibody minimum-lap-time optimal control (CasADi + IPOPT) and the 3-D CFD solver (Numba). Run those from the notebooks.</li>
-<li>Reading AiM <code>.xrk</code> logs and fitting from logged or TTC data. The site uses the values already in the config files.</li></ul>
-<h3>Reading the numbers</h3>
-<p>Inputs are stored in SI. Type a unit to enter anything else: <code>350 lbf/in</code>, <code>11 in</code>, <code>80 kW</code>, <code>245 kg</code>. Every EV input is currently a placeholder; see Accumulator → EV input status.
-The first run downloads the Python runtime (about 40 MB, cached afterwards).</p>
-<p class="muted">Built ${m.built || "?"}${m.commit ? " · commit " + m.commit : ""} · simulation bundle ${m.bundle_kB || "?"} kB</p>` })];
+<li>The spaceframe beam model: move, add or remove joints, change tube sizes and materials, and see mass, CG and torsional stiffness.</li>
+<li>Suspension kinematics from the hard points: drag a point and the camber, roll-centre and bump-steer curves follow.</li>
+<li>Driver profiles, rotor temperatures, and single wing sections from a panel method.</li></ul>
+<h3>READING THE NUMBERS</h3>
+<p>Inputs are stored in SI. Type a unit to enter anything else: <code>350 lbf/in</code>, <code>11 in</code>, <code>80 kW</code>, <code>245 kg</code>. NOTE: Every EV input is currently a placeholder; see Accumulator → EV input status.</p>
+<h3>READING THE GRAPHS</h3>
+<p>The following are PDFs of papers designed to help assist with the usage and interpretation of the graphical representations produced by the predictive lap simulation. The documentation includes graphics produced in the Jupyter notebooks [significantly more figures] as well as the website.</p>
+<ul><li>Powertrain Figure Guide: <a href="https://drive.google.com/file/d/1YBwXQAmsz8UNeMr8VXpKIFec95trGj-K/view?usp=sharing" target="_blank" rel="noopener">Predictive Lap Simulation – Graph Interpretation Guide (PDF)</a></li></ul>
+<h3>DOCUMENTATION</h3>
+<p>The following are PDF's of papers designed to help assist with the actual construction and modification of the predictive lap simulation source code. These files outline design decisions, important physical and mathematical implementations, numerical methods, data processing and more.</p>
+<ul><li>Powertrain Figure Guide: <a href="https://drive.google.com/file/d/1YBwXQAmsz8UNeMr8VXpKIFec95trGj-K/view?usp=sharing" target="_blank" rel="noopener">Predictive Lap Simulation – Graph Interpretation Guide (PDF)</a></li></ul>
+<p class="muted">Built by Haley Harper, UConn Formula SAE, Data Acquisition</p>` })];
 }
 
 function render() {

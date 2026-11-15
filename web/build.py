@@ -1,8 +1,8 @@
 #!/usr/bin/env python
-"""Build the lap-simulation website into web/site/ (a static site, ready for GitHub Pages).
+"""Build the lap-simulation into a website (a static site, ready for GitHub Pages).
 
-    python web/build.py            # bundle the simulation + write the baseline results
-    python web/build.py --serve    # ... then serve it at http://localhost:8000
+    python web/build.py                # bundle the simulation + write the baseline results
+    python web/build.py --serve        # ... then serve it at http://localhost:8000
     python web/build.py --no-studies   # skip the EV power-limit / gearing studies (faster)
 
 What it writes:
@@ -29,7 +29,7 @@ import zipfile
 from pathlib import Path
 
 WEB = Path(__file__).resolve().parent
-# fsae_lapsim/ (the folder holding IC/ and ev/). When web/ lives in another repository, point at it:
+# fsae_lapsim/ (the folder holding IC/ and ev/). If web/ lives in another repository, point at it:
 #   LAPSIM_ROOT=/path/to/fsae_lapsim python web/build.py
 ROOT = Path(os.environ.get("LAPSIM_ROOT") or WEB.parent).resolve()
 SITE = WEB / "site"
