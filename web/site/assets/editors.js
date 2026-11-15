@@ -707,12 +707,13 @@ QUICK.brakes.all.push(["vehicle:brakes.pad_mu", "Pad friction coefficient", "", 
 
 // ------------------------------------------------------------------ one wing section on its own
 const AF = { i: 0, custom: null };
-V("aero", "airfoil", "Wing elements, one at a time", "Each section alone in free air: shape, pressure and lift from a panel method. Pick an element, or change its section, chord, angle and speed.", (b) => {
+V("aero", "airfoil", "Wing elements, one at a time", "F1 to F3 and R1 to R4, each section alone in free air: shape, pressure and lift from a panel method. Change its chord, angle and speed, or swap in another section.", (b) => {
   const els = need(GEO().wing_elements); if (els.error) throw new Error(els.error);
   const rho = GEO().air_density || 1.12;
-  const state = AF.custom || (AF.custom = els.map((e) => ({ section: e.section, chord: e.chord, angle: e.angle_deg, speed: 15, coords: "", result: e.result })));
+  const state = AF.custom || (AF.custom = els.map((e) => ({ section: e.source === "cad" ? "" : e.section, chord: e.chord, angle: e.angle_deg, speed: 15, coords: "", result: e.result })));
   const out = el("div"), ctl = el("div", { class: "ctl" }), tabl = el("div");
-  const name = (e, k) => `${e.wing === "front_wing" ? "Front wing" : "Rear wing"} element ${e.element}`;
+  const name = (e) => `${e.name} · ${e.wing === "front_wing" ? "front wing" : "rear wing"}${e.described === false ? " (in the CAD only)" : ""}`;
+  const what = (k) => (state[k].coords ? "pasted coordinates" : state[k].section ? state[k].section : els[k].source === "cad" ? "cut from the CAD" : els[k].section);
   const show = () => {
     const c = state[AF.i], r = c.result, shape = plotDiv("short"), cp = plotDiv("short"), curve = plotDiv("short");
     out.replaceChildren(el("div", { class: "kpis" }, tile("Lift coefficient", fmt(r.cl, 3), ""), tile("Lift per metre of span", fmt(r.lift_N_per_m, 3), "N/m", `${fmt(r.lift_N_per_m / 9.81, 3)} kgf/m at ${c.speed} m/s`),
@@ -725,25 +726,25 @@ V("aero", "airfoil", "Wing elements, one at a time", "Each section alone in free
       { xaxis: { title: "angle to the airflow [deg]" }, yaxis: { title: "lift coefficient" } });
   };
   const table8 = () => tabl.replaceChildren(table({ columns: ["element", "section", "chord [mm]", "angle [deg]", "lift coefficient", "lift [N per m span]"],
-    rows: els.map((e, k) => [name(e, k), state[k].coords ? "pasted coordinates" : state[k].section, state[k].chord * 1e3, state[k].angle, state[k].result.cl, state[k].result.lift_N_per_m]) }));
+    rows: els.map((e, k) => [name(e), what(k), state[k].chord * 1e3, state[k].angle, state[k].result.cl, state[k].result.lift_N_per_m]) }));
   const solve = async () => {
     const c = state[AF.i];
-    try { setStatus("Solving the section…", "busy"); c.result = await call("airfoil", [c.section, c.chord, c.angle, c.speed, rho, c.coords || null]); setStatus("Section solved.", "ok"); show(); table8(); }
+    try { setStatus("Solving the section…", "busy"); c.result = await call("airfoil", [c.section || "naca4412", c.chord, c.angle, c.speed, rho, c.coords || null, !c.coords && !c.section && els[AF.i].unit ? els[AF.i].unit : null]); setStatus("Section solved.", "ok"); show(); table8(); }
     catch (e) { setStatus("The section could not be solved: " + (e.message || e), "err"); }
   };
   const controls = () => {
     const c = state[AF.i];
-    const sel = el("select", { "aria-label": "Wing element", onchange: () => { AF.i = +sel.value; controls(); show(); } }, els.map((e, k) => el("option", { value: k }, name(e, k)))); sel.value = AF.i;
-    const sec = el("input", { type: "text", value: c.section, style: "width:110px", "aria-label": "NACA section", onchange: () => { c.section = sec.value.trim(); c.coords = ""; solve(); } });
+    const sel = el("select", { "aria-label": "Wing element", onchange: () => { AF.i = +sel.value; controls(); show(); } }, els.map((e, k) => el("option", { value: k }, name(e)))); sel.value = AF.i;
+    const sec = el("input", { type: "text", value: c.section, placeholder: els[AF.i].source === "cad" ? "CAD section" : "", style: "width:120px", "aria-label": "NACA section", title: "Leave empty to use the section cut from the CAD, or type a NACA 4-digit code (e.g. naca6412) to try another shape", onchange: () => { c.section = sec.value.trim(); c.coords = ""; solve(); } });
     const paste = el("textarea", { rows: 4, placeholder: "Or paste the real section's coordinates here (a Selig .dat file: x y on each line, trailing edge → upper surface → leading edge → lower surface), then press Solve.", style: "width:100%;font:12px var(--mono)" });
     paste.value = c.coords;
-    ctl.replaceChildren(sel, el("label", {}, "NACA section ", sec), el("label", {}, "chord [mm] ", numIn(c.chord * 1e3, (v) => { c.chord = v / 1e3; solve(); }, { min: 10, style: "width:84px" })),
+    ctl.replaceChildren(sel, el("label", {}, "try a NACA section ", sec), el("label", {}, "chord [mm] ", numIn(c.chord * 1e3, (v) => { c.chord = v / 1e3; solve(); }, { min: 10, style: "width:84px" })),
       el("label", {}, "angle [deg] ", numIn(c.angle, (v) => { c.angle = v; solve(); }, { min: -20, max: 60, style: "width:76px" })), el("label", {}, "speed [m/s] ", numIn(c.speed, (v) => { c.speed = v; solve(); }, { min: 1, max: 60, style: "width:76px" })),
-      el("button", { class: "btn small navy", onclick: () => { c.coords = paste.value.trim(); solve(); } }, "Solve"), el("details", { style: "flex:1 1 100%" }, el("summary", { class: "muted", style: "cursor:pointer" }, "Use the real section (FX 76-MP-120, GOE 448, AH 74-7-6): paste coordinates"), paste));
+      el("button", { class: "btn small navy", onclick: () => { c.coords = paste.value.trim(); solve(); } }, "Solve"), el("details", { style: "flex:1 1 100%" }, el("summary", { class: "muted", style: "cursor:pointer" }, "Or paste a section's coordinates (for example a published FX, GOE or AH file)"), paste));
   };
   controls(); show(); table8();
-  b.append(ctl, out, el("div", { class: "sub", style: "margin-top:10px" }, "All eight elements, each on its own"), tabl,
-    el("div", { class: "note warn" }, "Read these as section properties, not installed loads. The method is inviscid: no stall and no drag, so lift keeps rising with angle where a real flap would separate. In the car each flap sits in the flow turned by the element ahead of it, near the ground and with endplates. The config uses NACA stand-ins for the FX, GOE and AH sections until their coordinates are pasted in."));
+  b.append(ctl, out, el("div", { class: "sub", style: "margin-top:10px" }, "Every element, each on its own"), tabl,
+    el("div", { class: "note warn" }, "Read these as section properties, not installed loads. The method is inviscid: no stall and no drag, so lift keeps rising with angle; a flap alone at 40 to 60 degrees would be stalled, so its number here only means something inside its stack (next card). " + (els[0].source === "cad" ? "Shapes, chords and angles are cut from the wing CAD." : "The CAD sections are not in this build: these are the NACA stand-ins from the CFD config.")));
 }, { wide: true });
 
 // ------------------------------------------------------------------ drivers
@@ -858,3 +859,59 @@ V("drivers", "driver_view", "Seating and sight line", "Drag the seat reference p
   ctx.local = () => { ed.draw(); show(); };
   show(); b.append(tiles, ctl, ed.node, el("div", { class: "note warn" }, "The seat reference point and seat-back angle are placeholders until they are measured on the car. The sight line is over the frame tubes only: bodywork, the steering wheel and the front wing are not in it. The hoop line joins the highest frame joint to the highest joint ahead of it."));
 }, { wide: true, cls: "low", first: true });
+
+
+// ------------------------------------------------------------------ wing stacks: the elements working together
+const WS = { zone: 1, speed: 15, f4: false, dAngle: {}, dz: 0, ground: true, cache: {} };
+V("aero", "wingstack", "Wing stacks: the elements working together", "The elements of one stretch of span solved together as they sit on the car, in ground effect. Front wing: F1 + F2 + F3 inboard of the middle endplate, F1 + F2 outboard, F1 alone beside the nose.", (b) => {
+  const W = need(GEO().wing_stacks); if (W.error) throw new Error(W.error);
+  const rho = GEO().air_density || 1.12, out = el("div"), ctl = el("div", { class: "ctl" }), ctl2 = el("div", { class: "ctl" }), est = el("div");
+  const zones = () => (WS.f4 ? W.zones_with_f4.map((z, k) => Object.assign({}, z, { result: JSON.stringify(z.elements) === JSON.stringify(W.zones[k].elements) ? W.zones[k].result : WS.cache["f4" + k] })) : W.zones);
+  const zname = (z) => `${z.wing === "front_wing" ? "Front wing" : "Rear wing"}, ${(z.y[0] * 1e3).toFixed(0)} to ${(z.y[1] * 1e3).toFixed(0)} mm from the centre line: ${z.elements.join(" + ")}`;
+  const edited = () => WS.speed !== 15 || WS.dz !== 0 || !WS.ground || Object.values(WS.dAngle).some((v) => v);
+  const key = (k) => JSON.stringify([k, WS.f4, WS.speed, WS.dz, WS.ground, WS.dAngle]);
+  const result = (k) => (edited() || WS.f4 ? WS.cache[key(k)] : null) || (!edited() ? zones()[k].result : null);
+  const solve = async (k) => {
+    const z = zones()[k];
+    if (result(k)) return result(k);
+    setStatus("Solving the wing stack…", "busy");
+    const r = await call("wing_stack", [z.elements, WS.speed, rho, WS.dAngle, z.wing === "front_wing" ? WS.dz / 1e3 : 0, WS.ground]);
+    WS.cache[key(k)] = r; setStatus("Wing stack solved.", "ok"); return r;
+  };
+  const show = async () => {
+    try {
+      const z = zones()[WS.zone], r = await solve(WS.zone), shape = plotDiv(), cp = plotDiv();
+      out.replaceChildren(el("div", { class: "kpis" }, tile("Stack downforce", fmt(r.downforce_N_per_m, 3), "N per m of span", `${fmt(r.downforce_N_per_m * z.width, 3)} N over this ${(z.width * 1e3).toFixed(0)} mm of span (both sides)`),
+        tile("Lift coefficient on the total chord", fmt(r.cl_on_total_chord, 3), "", `total chord ${fmt(r.total_chord_mm, 3)} mm`), tile("Lowest point above the ground", fmt(r.lowest_point_mm, 3), "mm"),
+        ...r.elements.map((e) => tile(`${e.name}: share of the load`, (100 * e.downforce_N_per_m / r.downforce_N_per_m).toFixed(0), "%", `${fmt(e.downforce_N_per_m, 3)} N/m · ${fmt(e.chord_mm, 3)} mm at ${fmt(e.angle_deg, 3)}°`))),
+        el("div", { class: "grid inner" }, el("div", {}, el("div", { class: "sub" }, "The stack as it sits on the car (x rearward, z up from the ground)"), shape), el("div", {}, el("div", { class: "sub" }, "Pressure on each element (suction up)"), cp)));
+      plot(shape, r.elements.map((e, i) => line(e.x.concat(e.x[0]), e.z.concat(e.z[0]), e.name, { fill: "toself", fillcolor: PAL[i] + "22", line: { width: 2, color: PAL[i] }, hovertemplate: e.name + "<extra></extra>" })),
+        { hovermode: "closest", xaxis: { title: "x [m]", constrain: "domain" }, yaxis: { title: "z [m]", scaleanchor: "x", constrain: "domain", rangemode: "tozero" } });
+      plot(cp, r.elements.map((e, i) => ({ x: e.cp_x, y: e.cp, mode: "lines", name: e.name, line: { width: 2, color: PAL[i] }, hovertemplate: e.name + ": Cp %{y:.2f}<extra></extra>" })),
+        { hovermode: "closest", xaxis: { title: "x [m]" }, yaxis: { title: "pressure coefficient (axis cut at -10)", range: [1.2, -10] } });
+      estimate();
+    } catch (e) { out.replaceChildren(el("div", { class: "err" }, String(e.message || e))); setStatus("The wing stack could not be solved: " + (e.message || e), "err"); }
+  };
+  /* Whole-wing figure: each zone's load per metre times its width (a strip estimate), next to the 3-D CFD run. */
+  const estimate = async () => {
+    const zs = zones(), rs = []; for (let k = 0; k < zs.length; k++) rs.push(await solve(k));
+    const sum = (w) => zs.reduce((a, z, k) => a + (z.wing === w ? rs[k].downforce_N_per_m * z.width : 0), 0);
+    let cfd = null; try { const base = await getJSON("data/cfd/base.json"), t = base.group_table, gi = t.columns.indexOf("group"), di = t.columns.findIndex((c) => c.startsWith("downforce"));
+      cfd = { speed: base.speed, f: t.rows.find((r) => r[gi] === "front_wing")[di], r: t.rows.find((r) => r[gi] === "rear_wing")[di] }; } catch (e) { cfd = null; }
+    const sc = cfd ? (cfd.speed / WS.speed) ** 2 : 1, rows = [["Front wing", sum("front_wing")], ["Rear wing", sum("rear_wing")]].map(([n, v], i) => [n, +v.toFixed(0), cfd ? +(v * sc).toFixed(0) : null, cfd ? +(i ? cfd.r : cfd.f).toFixed(0) : null, cfd ? +((v * sc) / (i ? cfd.r : cfd.f)).toFixed(1) : null]);
+    est.replaceChildren(el("div", { class: "sub", style: "margin-top:10px" }, "Whole wing: every zone's load per metre times its width"),
+      table({ columns: [`wing`, `this model at ${WS.speed} m/s [N]`, cfd ? `this model at ${cfd.speed} m/s [N]` : "", cfd ? `3-D CFD run at ${cfd.speed} m/s [N]` : "", cfd ? "this model ÷ CFD" : ""], rows }));
+  };
+  const controls = () => {
+    const zs = zones(), sel = el("select", { "aria-label": "Span zone", onchange: () => { WS.zone = +sel.value; controls(); show(); } }, zs.map((z, k) => el("option", { value: k }, zname(z)))); sel.value = WS.zone;
+    ctl.replaceChildren(sel, el("label", {}, "speed [m/s] ", numIn(WS.speed, (v) => { WS.speed = v; show(); }, { min: 1, max: 60, style: "width:76px" })),
+      el("label", {}, "front wing height [mm] ", numIn(WS.dz, (v) => { WS.dz = v; show(); }, { min: -60, max: 150, style: "width:76px" })),
+      el("label", { class: "check" }, el("input", { type: "checkbox", checked: WS.ground, onchange: (e) => { WS.ground = e.target.checked; show(); } }), "Ground"),
+      el("label", { class: "check", title: "The wing CAD holds a fourth front flap, 611-11-17IC F4, between the same endplates as F3" }, el("input", { type: "checkbox", checked: WS.f4, onchange: (e) => { WS.f4 = e.target.checked; controls(); show(); } }), "Include the CAD's F4"));
+    ctl2.replaceChildren(el("span", { class: "muted" }, "Turn an element about its leading edge [deg, + = more wing]:"), ...zs[WS.zone].elements.map((n) => el("label", {}, n + " ", numIn(WS.dAngle[n] || 0, (v) => { WS.dAngle = Object.assign({}, WS.dAngle, { [n]: v }); show(); }, { min: -20, max: 20, step: 0.5, style: "width:70px" }))),
+      el("button", { class: "btn small", onclick: () => { WS.dAngle = {}; WS.dz = 0; WS.speed = 15; WS.ground = true; controls(); show(); } }, "Reset"));
+  };
+  controls(); show();
+  b.append(ctl, ctl2, out, est, el("div", { class: "note warn" }, "Use this for how the load is shared between elements, where the suction peaks are, and which way a change of angle, gap or height moves things. The size of the loads is an upper bound: the method has no viscosity, so nothing stalls and the slots work perfectly, and it is two-dimensional, so there are no tip or endplate losses. The table shows how far above the 3-D CFD run that puts it. Shapes, chords, angles, gaps and heights are cut from the wing CAD."));
+}, { wide: true });
+{ const i = VISUALS.findIndex((v) => v.id === "wingstack"), m = VISUALS.splice(i, 1)[0]; VISUALS.splice(VISUALS.findIndex((v) => v.id === "airfoil") + 1, 0, m); }

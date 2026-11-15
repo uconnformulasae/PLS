@@ -846,10 +846,19 @@ def geometry(car="ic"):
     def _elements():
         rows = wing_elements()
         for r in rows:                                     # each element alone, at its own angle, 15 m/s
-            r["result"] = airfoil(r["section"], r["chord"], r["angle_deg"], 15.0, rho)
+            r["result"] = airfoil(r["section"], r["chord"], r["angle_deg"], 15.0, rho, points=r.get("unit"))
         return rows
     _safe(out, "wing_elements", _elements)
     _safe(out, "tunnel", tunnel_shapes)
+
+    def _stacks():
+        if not wing_sections():
+            return None
+        zones = wing_zones()
+        for z in zones:
+            z["result"] = wing_stack(z["elements"], 15.0, rho)
+        return {"zones": zones, "zones_with_f4": wing_zones(True)}
+    _safe(out, "wing_stacks", _stacks)
     out["air_density"] = _num(rho, 4)
     return out
 
@@ -1037,10 +1046,13 @@ def _panel(poly, alpha_deg):
     return float(cl), float(cm), xm, ym, cp
 
 
-def airfoil(section="naca4412", chord=0.35, angle_deg=5.0, speed=15.0, rho=1.12, coordinates=None):
+def airfoil(section="naca4412", chord=0.35, angle_deg=5.0, speed=15.0, rho=1.12, coordinates=None, points=None):
     """One section alone in free air: shape, pressure distribution, lift and moment at ``angle_deg``, and the lift
     curve. Loads are per metre of span. For a wing element the angle is its chord angle to the airflow."""
-    poly = _section_from_text(coordinates) if coordinates else _naca4(section)
+    if points is not None:                              # a section already as unit-chord points (the CAD cut)
+        poly = np.asarray(points, float)
+    else:
+        poly = _section_from_text(coordinates) if coordinates else _naca4(section)
     cl, cm, xm, ym, cp = _panel(poly, angle_deg)
     al = np.arange(-6.0, 20.1, 2.0)
     curve = [_panel(poly, a)[0] for a in al]
@@ -1055,16 +1067,174 @@ def airfoil(section="naca4412", chord=0.35, angle_deg=5.0, speed=15.0, rho=1.12,
             "reynolds": _num(rho * speed * chord / 1.81e-5, 3), "q_Pa": _num(qd, 4), "min_cp": _num(float(cp.min()), 4)}
 
 
+_WINGS = {}
+# The team's description of the front wing: F1 and F2 run the full width of the stack, F3 only inboard of the middle
+# endplate. The CAD assembly also holds a fourth flap (611-11-17IC F4) beside F3: it is listed, and left out of the
+# stacks unless asked for.
+DESCRIBED = ("F1", "F2", "F3", "R1", "R2", "R3", "R4")
+
+
+def wing_sections():
+    """The wing sections cut from the CAD (web/export_wings.py -> bridge/wing_sections.json), or None."""
+    if "cad" not in _WINGS:
+        f = Path(__file__).resolve().parent / "wing_sections.json"
+        _WINGS["cad"] = __import__("json").loads(f.read_text()) if f.exists() else None
+    return _WINGS["cad"]
+
+
 def wing_elements():
-    """The wing elements listed in configs/ct17_cfd.yaml: [{wing, element, section, chord, angle_deg, note}]."""
+    """Every wing element: [{name, wing, source, section, chord, angle_deg, thickness_pct, camber_pct, y, span, unit}].
+    From the CAD cut when it is in the bundle (the real sections), else the NACA stand-ins in configs/ct17_cfd.yaml."""
+    cad = wing_sections()
+    if cad:
+        return [{"name": e["name"], "wing": e["wing"], "source": "cad", "section": "section cut from the CAD", "chord": e["chord"], "angle_deg": e["angle_deg"],
+                 "thickness_pct": e["thickness_pct"], "camber_pct": e["camber_pct"], "y": e["y"], "span": e["span"], "unit": e["unit"],
+                 "described": e["name"] in DESCRIBED} for e in cad["elements"]]
     import yaml
     f = IC / "configs" / "ct17_cfd.yaml"
     y = yaml.safe_load(f.read_text()) or {}
     out = []
     for wing in ("front_wing", "rear_wing"):
         for k, e in enumerate((y.get(wing) or {}).get("elements") or []):
-            out.append({"wing": wing, "element": k + 1, "section": str(e.get("section", "")), "chord": _num(e.get("chord")),
-                        "angle_deg": _num(e.get("angle_deg")), "gap": _num(e.get("gap")), "overlap": _num(e.get("overlap"))})
+            name = f"{'F' if wing == 'front_wing' else 'R'}{k + 1}"
+            out.append({"name": name, "wing": wing, "source": "naca", "section": str(e.get("section", "")), "chord": _num(e.get("chord")),
+                        "angle_deg": _num(e.get("angle_deg")), "span": _num((y.get(wing) or {}).get("span")), "described": name in DESCRIBED})
+    return out
+
+
+# --------------------------------------------------------------------------- several elements together
+def _clockwise_from_te(poly):
+    """A section as the panel method wants it: closed, clockwise, starting and ending at the trailing edge."""
+    P = np.asarray(poly, float)
+    if np.hypot(*(P[0] - P[-1])) < 1e-9:
+        P = P[:-1]
+    if 0.5 * (np.dot(P[:, 0], np.roll(P[:, 1], -1)) - np.dot(P[:, 1], np.roll(P[:, 0], -1))) > 0:      # counter-clockwise
+        P = np.vstack([P[:1], P[1:][::-1]])
+    return np.vstack([P, P[:1]])
+
+
+def _influence(xm, ym, th, x, y, th_j, self_term):
+    """Normal and tangential velocity at panel mid-points (xm, ym, angle th) from unit-strength source and vortex
+    panels with nodes (x, y) and angles th_j: (An, At, Vn, Vt). Hess-Smith."""
+    X1, Y1 = xm[:, None] - x[None, :-1], ym[:, None] - y[None, :-1]
+    X2, Y2 = xm[:, None] - x[None, 1:], ym[:, None] - y[None, 1:]
+    F = np.log(np.hypot(X2, Y2) / np.hypot(X1, Y1))
+    B = np.arctan2(Y2 * X1 - X2 * Y1, X2 * X1 + Y2 * Y1)
+    if self_term:
+        np.fill_diagonal(F, 0.0)
+        np.fill_diagonal(B, np.pi)
+    D = th[:, None] - th_j[None, :]
+    sn, cs = np.sin(D), np.cos(D)
+    k = 1 / (2 * np.pi)
+    return k * (sn * F + cs * B), k * (sn * B - cs * F), k * (cs * F - sn * B), k * (sn * F + cs * B)
+
+
+def _panel_multi(bodies, ground=None):
+    """Hess-Smith panel method for several closed sections in a uniform flow along +x (speed 1): sources on every
+    panel, one vortex strength per section, a Kutta condition at every trailing edge. ``ground`` = height of a flat
+    ground (the flow's mirror image below it makes the ground a streamline, as a road moving with the air does).
+    Inviscid: no stall, no profile drag. Returns per section (fx, fz) per unit dynamic pressure per metre of span,
+    and (x_mid, cp) along its surface."""
+    P = [_clockwise_from_te(b) for b in bodies]
+    xs, ys, own, first, last, n0 = [], [], [], [], [], 0
+    for b, p in enumerate(P):
+        n = len(p) - 1
+        xs.append(p[:, 0]); ys.append(p[:, 1]); own += [b] * n
+        first.append(n0); last.append(n0 + n - 1); n0 += n
+    N, M, own = n0, len(P), np.array(own)
+    xm = np.concatenate([0.5 * (x[:-1] + x[1:]) for x in xs]); ym = np.concatenate([0.5 * (y[:-1] + y[1:]) for y in ys])
+    dx = np.concatenate([np.diff(x) for x in xs]); dy = np.concatenate([np.diff(y) for y in ys])
+    th = np.arctan2(dy, dx)
+    An, At, Vn, Vt = (np.zeros((N, N)) for _ in range(4))
+    c0 = 0
+    for b, (x, y) in enumerate(zip(xs, ys)):                              # each section's panels acting on every panel
+        n = len(x) - 1
+        sl = slice(c0, c0 + n)
+        an, at, vn, vt = _influence(xm, ym, th, x, y, th[sl], False)
+        # the section's own panels: the singular self term
+        a2, t2, v2, w2 = _influence(xm[sl], ym[sl], th[sl], x, y, th[sl], True)
+        an[sl], at[sl], vn[sl], vt[sl] = a2, t2, v2, w2
+        An[:, sl], At[:, sl], Vn[:, sl], Vt[:, sl] = an, at, vn, vt
+        if ground is not None:                                           # mirror image below the ground: same sources, opposite vortices
+            yi = 2 * ground - y
+            thi = np.arctan2(np.diff(yi), np.diff(x))
+            an, at, vn, vt = _influence(xm, ym, th, x, yi, thi, False)
+            An[:, sl] += an; At[:, sl] += at; Vn[:, sl] -= vn; Vt[:, sl] -= vt
+        c0 += n
+    A = np.zeros((N + M, N + M)); rhs = np.zeros(N + M)
+    A[:N, :N] = An
+    for b in range(M):
+        A[:N, N + b] = Vn[:, own == b].sum(1)
+    rhs[:N] = np.sin(th)                                                 # flow along +x: no flow through any panel
+    for b in range(M):                                                    # Kutta: equal and opposite speeds either side of each trailing edge
+        for i in (first[b], last[b]):
+            A[N + b, :N] += At[i]
+            for c in range(M):
+                A[N + b, N + c] += Vt[i, own == c].sum()
+        rhs[N + b] = -np.cos(th[first[b]]) - np.cos(th[last[b]])
+    sol = np.linalg.solve(A, rhs)
+    q, gam = sol[:N], sol[N:]
+    vt = np.cos(th) + At @ q + sum(gam[b] * Vt[:, own == b].sum(1) for b in range(M))
+    cp = 1 - vt ** 2
+    out = []
+    for b in range(M):
+        k = own == b
+        out.append({"fx": float((cp[k] * dy[k]).sum()), "fz": float(-(cp[k] * dx[k]).sum()), "x": xm[k], "z": ym[k], "cp": cp[k]})
+    return out
+
+
+def _stack_polys(names, d_angle=None, dz=0.0):
+    """The named elements as they sit on the car (CAD cut), each turned by its d_angle [deg] about its own leading
+    edge (trailing edge up = more wing) and the whole stack raised by dz [m]."""
+    cad = wing_sections()
+    if not cad:
+        raise ValueError("the CAD sections are not in this build: run  python web/export_wings.py  then  python web/build.py")
+    by = {e["name"]: e for e in cad["elements"]}
+    out = []
+    for n in names:
+        if n not in by:
+            raise ValueError(f"no wing element named {n}")
+        p = np.array(by[n]["poly"], float)
+        le = p[np.argmax(np.linalg.norm(p - p[0], axis=1))]
+        a = np.radians(float((d_angle or {}).get(n, 0.0)))
+        r = p - le
+        p = np.stack([le[0] + r[:, 0] * np.cos(a) - r[:, 1] * np.sin(a), le[1] + r[:, 0] * np.sin(a) + r[:, 1] * np.cos(a) + dz], axis=1)
+        out.append(p)
+    return out
+
+
+def wing_stack(names, speed=15.0, rho=1.12, d_angle=None, dz=0.0, ground=True):
+    """Several wing elements solved together as they sit on the car, in ground effect: each element's pressure
+    distribution and load per metre of span, and the stack's totals. 2-D and inviscid (see _panel_multi)."""
+    by = {e["name"]: e for e in wing_sections()["elements"]}
+    polys = _stack_polys(names, d_angle, dz)
+    if ground and min(float(p[:, 1].min()) for p in polys) <= 0.004:
+        raise ValueError("the wing is on the ground: raise it")
+    res = _panel_multi(polys, 0.0 if ground else None)
+    qd = 0.5 * rho * speed ** 2
+    rows, tot_down, tot_x = [], 0.0, 0.0
+    for n, p, r in zip(names, polys, res):
+        c = by[n]["chord"]
+        rows.append({"name": n, "chord_mm": _num(1e3 * c), "angle_deg": _num(by[n]["angle_deg"] + float((d_angle or {}).get(n, 0.0)), 4),
+                     "cl": _num(-r["fz"] / c, 4), "downforce_N_per_m": _num(-r["fz"] * qd, 4), "fx_N_per_m": _num(r["fx"] * qd, 4),
+                     "min_cp": _num(float(r["cp"].min()), 4), "x": _j(p[:, 0], 5), "z": _j(p[:, 1], 5), "cp_x": _j(r["x"], 5), "cp": _j(r["cp"], 4)})
+        tot_down += -r["fz"] * qd
+        tot_x += r["fx"] * qd
+    ref = sum(by[n]["chord"] for n in names)
+    return {"names": list(names), "elements": rows, "downforce_N_per_m": _num(tot_down, 4), "fx_N_per_m": _num(tot_x, 4),
+            "cl_on_total_chord": _num(tot_down / qd / ref, 4), "total_chord_mm": _num(1e3 * ref), "speed": speed, "rho": rho,
+            "ground": bool(ground), "lowest_point_mm": _num(1e3 * min(float(p[:, 1].min()) for p in polys))}
+
+
+def wing_zones(include_f4=False):
+    """The span zones of both wings: [{wing, y, width (both sides), elements}], as the team describes the front wing
+    (F1 + F2 + F3 inboard, F1 + F2 outboard), or with the CAD's fourth flap as well."""
+    cad = wing_sections()
+    out = []
+    for wing in ("front_wing", "rear_wing"):
+        for z in (cad or {}).get("zones", {}).get(wing, []):
+            names = [n for n in z["elements"] if include_f4 or n != "F4"]
+            out.append({"wing": wing, "y": z["y"], "width": _num(2 * (z["y"][1] - z["y"][0])), "elements": names})
     return out
 
 
@@ -1084,8 +1254,16 @@ def tunnel_shapes():
     each wing's elements, the body's centre-line silhouette, the driver's helmet and the wheels."""
     import yaml
     y = yaml.safe_load((IC / "configs" / "ct17_cfd.yaml").read_text()) or {}
-    out = {"elements": {}, "le": {}}
+    out = {"elements": {}, "le": {}, "names": {}}
+    cad = wing_sections()
     for wing in ("front_wing", "rear_wing"):
+        if cad:                                                # the real sections, where the CAD puts them
+            els = [e for e in cad["elements"] if e["wing"] == wing]
+            polys = [np.array(e["poly"], float) for e in els]
+            out["elements"][wing] = [_j(q, 5) for q in polys]
+            out["le"][wing] = [_j(q[np.argmax(np.linalg.norm(q - q[0], axis=1))], 5) for q in polys]
+            out["names"][wing] = [e["name"] for e in els]
+            continue
         w, polys, les, prev = y.get(wing) or {}, [], [], None
         for k, e in enumerate(w.get("elements") or []):
             if prev is None:
@@ -1101,6 +1279,7 @@ def tunnel_shapes():
             les = [q + np.array([0.0, dz]) for q in les]
         out["elements"][wing] = [_j(q, 5) for q in polys]
         out["le"][wing] = [_j(q, 5) for q in les]
+        out["names"][wing] = [f"{'F' if wing == 'front_wing' else 'R'}{k + 1}" for k in range(len(polys))]
     st = np.array((y.get("body") or {}).get("stations") or [], float)
     if len(st):
         out["body"] = _j(np.vstack([st[:, [0, 3]], st[::-1][:, [0, 2]]]), 5)        # over the top, back along the floor

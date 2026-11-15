@@ -1,7 +1,7 @@
 {
- "built": "2026-11-15 00:23",
+ "built": "2026-11-15 00:52",
  "commit": "8aa80a3",
- "bundle_kB": 582,
+ "bundle_kB": 599,
  "files": [
   "IC/fsae_vd/__init__.py",
   "IC/fsae_vd/adjust.py",
@@ -98,6 +98,7 @@
   "ev/fsae_ev_bms/fsae_ev_bms/thermal.py",
   "ev/fsae_ev_bms/fsae_ev_bms/units.py",
   "ev/fsae_ev_bms/configs/ev_accumulator.yaml",
-  "web/bridge/lapsim_web.py"
+  "web/bridge/lapsim_web.py",
+  "web/bridge/wing_sections.json"
  ]
 }

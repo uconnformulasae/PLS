@@ -78,11 +78,12 @@ class Tunnel {
 // ------------------------------------------------------------------ geometry -> grid
 const TV = { view: "front", mode: "speed", smoke: true, running: true, speed: 15, dFront: 0, dRear: 0, ride: 0 };
 const TUNNEL_VIEWS = {
-  front: { name: "Front wing, 4 elements, in ground effect", box: [-1.25, 0.25, 0, 0.62], ground: true, parts: ["front4"] },
-  rear: { name: "Rear wing, 4 elements", box: [0.75, 2.75, 0.35, 1.5], ground: false, parts: ["rear"] },
-  centre: { name: "Car centre line: main plane, body, driver, rear wing", box: [-1.7, 4.3, 0, 1.9], ground: true, parts: ["front1", "body", "helmet", "rear"] },
-  cascade: { name: "0.35 m off centre: front and rear wings", box: [-1.7, 4.3, 0, 1.9], ground: true, parts: ["front4", "rear"] },
-  wheels: { name: "Through the tires: 2-element wing tip, front and rear tire", box: [-1.7, 4.3, 0, 1.9], ground: true, parts: ["front2", "wheels"] },
+  front: { name: "Front wing inboard of the middle endplate: F1 + F2 + F3", box: [-1.25, 0.25, 0, 0.62], ground: true, parts: ["front3"] },
+  frontOut: { name: "Front wing outboard, ahead of the tire: F1 + F2", box: [-1.25, 0.25, 0, 0.62], ground: true, parts: ["front2"] },
+  rear: { name: "Rear wing: R1 + R2 + R3 + R4", box: [0.85, 2.85, 0.4, 1.55], ground: false, parts: ["rear"] },
+  centre: { name: "Car centre line: F1, body, driver, rear wing", box: [-1.7, 4.3, 0, 1.9], ground: true, parts: ["front1", "body", "helmet", "rear"] },
+  cascade: { name: "0.35 m off centre: front stack and rear wing", box: [-1.7, 4.3, 0, 1.9], ground: true, parts: ["front3", "rear"] },
+  wheels: { name: "Through the tires: F1 + F2, front and rear tire", box: [-1.7, 4.3, 0, 1.9], ground: true, parts: ["front2", "wheels"] },
 };
 const BODY_NAMES = ["", "front wing", "rear wing", "body", "driver's helmet", "front tire", "rear tire"];
 /* The shapes of a view as [{id, poly | circle}], with the sliders applied (flap angle, front-wing ride height). */
@@ -93,7 +94,7 @@ function tunnelShapes(view) {
     return p.map(([x, z]) => [o[0] + (x - o[0]) * c - (z - o[1]) * s, o[1] + (x - o[0]) * s + (z - o[1]) * c + dz]);
   });
   for (const part of TUNNEL_VIEWS[view].parts) {
-    if (part.startsWith("front")) flaps(T.elements.front_wing.slice(0, +part.slice(5)), T.le.front_wing, TV.dFront, TV.ride / 1e3).forEach((p) => out.push({ id: 1, poly: p }));
+    if (part.startsWith("front")) flaps(T.elements.front_wing.slice(0, +part.slice(5) + (TV.f4 && part === "front3" ? 1 : 0)), T.le.front_wing, TV.dFront, TV.ride / 1e3).forEach((p) => out.push({ id: 1, poly: p }));
     else if (part === "rear") flaps(T.elements.rear_wing, T.le.rear_wing, TV.dRear, 0).forEach((p) => out.push({ id: 2, poly: p }));
     else if (part === "body" && T.body) out.push({ id: 3, poly: T.body });
     else if (part === "helmet" && T.helmet) out.push({ id: 4, circle: T.helmet });
@@ -171,7 +172,7 @@ V("aero", "tunnel", "Virtual wind tunnel (2-D)", "Air flowing over a side-view s
     t = tunnelBuild(NX); field.width = t.nx; field.height = t.ny; wrap.style.aspectRatio = `${t.nx} / ${t.ny}`;
     fctx = field.getContext("2d"); img = fctx.createImageData(t.nx, t.ny); smoke = new Smoke(t, Math.max(12, Math.round(t.ny / 6)));
     const v = TUNNEL_VIEWS[TV.view];
-    info.textContent = `${v.name}. Window ${(v.box[1] - v.box[0]).toFixed(1)} m long, ${(t.dx * 1e3).toFixed(1)} mm per cell.` + (t.dx > 0.008 ? " The slots between wing elements (about 12 mm) are narrower than a cell here: use a wing view to see slot flow." : "");
+    info.textContent = `${v.name}. Window ${(v.box[1] - v.box[0]).toFixed(1)} m long, ${(t.dx * 1e3).toFixed(1)} mm per cell.` + (t.dx > 0.008 ? " The slots between wing elements are narrower than a cell here: use a wing view to see slot flow." : "");
     showLegend(); lastTiles = 0; tunnelDraw(t, fctx, img); showTiles();      // the shape shows at once, before the flow starts moving
   };
   const showLegend = () => {
@@ -213,6 +214,7 @@ V("aero", "tunnel", "Virtual wind tunnel (2-D)", "Air flowing over a side-view s
   const ctl = el("div", { class: "ctl" }, sel("Slice", TV.view, Object.entries(TUNNEL_VIEWS).map(([k, v]) => [k, v.name]), (v) => { TV.view = v; build(); }),
     sel("Colour", TV.mode, [["speed", "Colour: air speed"], ["pressure", "Colour: pressure"], ["spin", "Colour: spin (vortices)"]], (v) => { TV.mode = v; showLegend(); tunnelDraw(t, fctx, img); }),
     el("label", { class: "check" }, el("input", { type: "checkbox", checked: TV.smoke, onchange: (e) => { TV.smoke = e.target.checked; } }), "Smoke"), run,
+    el("label", { class: "check", title: "The wing CAD holds a fourth front flap, 611-11-17IC F4, beside F3" }, el("input", { type: "checkbox", checked: !!TV.f4, onchange: (e) => { TV.f4 = e.target.checked; build(); } }), "CAD's F4"),
     el("button", { class: "btn small", onclick: () => build() }, "Restart the flow"));
   const ctl2 = el("div", { class: "ctl" }, slider("Front flaps", "dFront", -12, 12, 1, "deg", true), slider("Rear flaps", "dRear", -12, 12, 1, "deg", true), slider("Front wing height", "ride", -40, 60, 5, "mm", true), slider("Car speed", "speed", 5, 35, 1, "m/s", false));
   build();

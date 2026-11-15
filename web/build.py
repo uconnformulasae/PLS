@@ -51,7 +51,7 @@ BUNDLE = [
     ("ev/configs/tracks", ["*.yaml"]),
     ("ev/fsae_ev_bms/fsae_ev_bms", ["*.py"]),
     ("ev/fsae_ev_bms/configs", ["*.yaml"]),
-    ("web/bridge", ["*.py"]),
+    ("web/bridge", ["*.py", "*.json"]),
 ]
 # modules that need packages the browser cannot load (CasADi / IPOPT, ipywidgets): left out of the bundle
 EXCLUDE = {"ocp.py", "chassis_sym.py", "chassis_corner_sym.py", "mf61_sym.py", "powertrain_sym.py", "validate_mb.py",
