@@ -13,7 +13,7 @@ LAPSIM_ROOT=/path/to/fsae_lapsim python web/build.py --serve      # build, then 
 |---|---|
 | `bridge/lapsim_web.py` | Calls `fsae_vd` / `fsae_pt` / `fsae_ev` and returns JSON: inputs, event results, every lap channel, subsystem data, sweeps. |
 | `build.py` | Zips the simulation packages, configs and track files into `site/py/lapsim.zip`, then runs both cars **from that zip** to write the baseline `site/data/*.json`. |
-| `site/` | The website: `index.html`, `assets/app.css`, `assets/app.js`, `assets/editors.js`, `assets/worker.js`. This folder is what gets published. |
+| `site/` | The website: `index.html`, `assets/app.css`, `assets/app.js`, `assets/editors.js`, `assets/tunnel.js`, `assets/worker.js`. This folder is what gets published. |
 
 `site/index.html` also works opened by double-click (no server): `build.py` writes a script copy of every data file
 for that case. Running a simulation still needs the internet the first time, to download the Python runtime.
@@ -73,6 +73,10 @@ Colours are the variables at the top of `site/assets/app.css`. `--navy` (`#000E2
   figure, and what the chosen driver changes in the car (mass, CG, grip scale, shift time, endurance power).
 * **Brakes**: rotor temperature through the lap and through endurance, repeated stops, corner hardware.
 * **Aero**: each wing element alone, from a panel method in the bridge (`airfoil()`); real section coordinates can be pasted in.
+
+* **Virtual wind tunnel (2-D)** on the Aero page (`site/assets/tunnel.js`): a lattice-Boltzmann flow solver running in
+  the page on side-view slices built from `configs/ct17_cfd.yaml` (`tunnel_shapes()` in the bridge). Flow patterns and
+  the direction of a change only: it is two-dimensional and far below the car's Reynolds number.
 
 Each of these writes an ordinary input override (`geom:frame`, `geom:hardpoints`, `geom:tracks`, or a config key),
 so Export / Import, sweeps and Run simulation all see it. With **Live preview** on, a change re-computes that page's

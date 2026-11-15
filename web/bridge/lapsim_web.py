@@ -849,6 +849,7 @@ def geometry(car="ic"):
             r["result"] = airfoil(r["section"], r["chord"], r["angle_deg"], 15.0, rho)
         return rows
     _safe(out, "wing_elements", _elements)
+    _safe(out, "tunnel", tunnel_shapes)
     out["air_density"] = _num(rho, 4)
     return out
 
@@ -1064,4 +1065,54 @@ def wing_elements():
         for k, e in enumerate((y.get(wing) or {}).get("elements") or []):
             out.append({"wing": wing, "element": k + 1, "section": str(e.get("section", "")), "chord": _num(e.get("chord")),
                         "angle_deg": _num(e.get("angle_deg")), "gap": _num(e.get("gap")), "overlap": _num(e.get("overlap"))})
+    return out
+
+
+# --------------------------------------------------------------------------- side-view outlines for the 2-D wind tunnel
+def _place(section, chord, angle_deg, le):
+    """A unit section as it sits on the car (x rearward, z up): inverted (suction side down), scaled, pitched
+    trailing-edge-up by ``angle_deg`` and moved to its leading edge ``le``. As fsae_cfd.geometry.airfoils.place_element."""
+    p = _naca4(section, 48).copy()
+    p[:, 1] *= -1.0
+    p *= chord
+    a = np.radians(angle_deg)
+    return np.stack([p[:, 0] * np.cos(a) - p[:, 1] * np.sin(a) + le[0], p[:, 0] * np.sin(a) + p[:, 1] * np.cos(a) + le[1]], axis=1)
+
+
+def tunnel_shapes():
+    """Side-view outlines from configs/ct17_cfd.yaml, in metres (x rearward from the front axle, z up from the ground):
+    each wing's elements, the body's centre-line silhouette, the driver's helmet and the wheels."""
+    import yaml
+    y = yaml.safe_load((IC / "configs" / "ct17_cfd.yaml").read_text()) or {}
+    out = {"elements": {}, "le": {}}
+    for wing in ("front_wing", "rear_wing"):
+        w, polys, les, prev = y.get(wing) or {}, [], [], None
+        for k, e in enumerate(w.get("elements") or []):
+            if prev is None:
+                le = np.array(w["main_le"], float) if "main_le" in w else np.array([float(w.get("main_le_x", 0.0)), 0.0])
+            else:
+                le = prev[0] + np.array([-float(e.get("overlap", 0.01)), float(e.get("gap", 0.012))])
+            prev = _place(e["section"], float(e["chord"]), float(e["angle_deg"]), le)
+            polys.append(prev)
+            les.append(le)
+        if polys and "ground_clearance" in w:                 # the main plane's lowest point sits at the measured clearance
+            dz = float(w["ground_clearance"]) - float(polys[0][:, 1].min())
+            polys = [q + np.array([0.0, dz]) for q in polys]
+            les = [q + np.array([0.0, dz]) for q in les]
+        out["elements"][wing] = [_j(q, 5) for q in polys]
+        out["le"][wing] = [_j(q, 5) for q in les]
+    st = np.array((y.get("body") or {}).get("stations") or [], float)
+    if len(st):
+        out["body"] = _j(np.vstack([st[:, [0, 3]], st[::-1][:, [0, 2]]]), 5)        # over the top, back along the floor
+        out["body_half_width"] = _j(st[:, [0, 1]], 5)
+    d = y.get("driver") or {}
+    if "helmet_centre" in d:
+        out["helmet"] = [_num(d["helmet_centre"][0]), _num(d["helmet_centre"][2]), _num(d.get("helmet_radius", 0.135))]
+    wh = y.get("wheels") or {}
+    cfg = _load("ic")["vehicle"]
+    out["wheels"] = {"radius": _num(wh.get("radius", cfg.tires.tire_radius)), "wheelbase": _num(cfg.geometry.wheelbase),
+                     "inner_face_y": _num(cfg.geometry.track_front / 2 - float(wh.get("width", 0.19)) / 2)}
+    fw = y.get("front_wing") or {}
+    out["front_sections"] = fw.get("sections")
+    out["rear_half_span"] = _num(float((y.get("rear_wing") or {}).get("span", 0.86)) / 2)
     return out

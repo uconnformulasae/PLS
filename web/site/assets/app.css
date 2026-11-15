@@ -234,3 +234,9 @@ svg.view .tick { fill: #9aa3b5; font-family: var(--font); } svg.view .tick.name 
 textarea { border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; }
 @media (max-width: 600px) { .dform input { font-size: 16px; } }
 .card.prose { max-width: none; } .card.prose p, .card.prose ul { max-width: 95ch; }
+
+/* ---------- 2-D wind tunnel */
+.tunnel { position: relative; width: 100%; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #f7fafe; }
+.tunnel canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.tunnel .tfield { image-rendering: auto; }
+.tslider { display: inline-flex; align-items: center; gap: 6px; } .tslider b { color: var(--navy); min-width: 58px; font-variant-numeric: tabular-nums; }
