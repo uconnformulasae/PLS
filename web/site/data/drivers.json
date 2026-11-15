@@ -1,0 +1,53 @@
+{
+ "_about": "Driver profiles for the lap-sim site. Edit here (or on the site's Driver page, then Export) and rebuild. Lengths in mm, mass in kg. Leave a value null when it has not been measured.",
+ "seat": {
+  "x_mm": 340,
+  "z_mm": 140,
+  "back_angle_deg": 35,
+  "_note": "ASSUMED seat reference point (hip) behind the front axle / above the ground, and seat-back angle from vertical. Measure on the car."
+ },
+ "drivers": [
+  {
+   "id": "design",
+   "name": "Design driver (baseline)",
+   "mass_kg": null,
+   "stature_mm": null,
+   "eye_height_mm": 740,
+   "head_top_mm": 940,
+   "chest_depth_mm": null,
+   "cg_above_seat_mm": 230,
+   "grip_used_pct": 100,
+   "upshift_ms": null,
+   "endurance_power_kW": null,
+   "notes": "The driver the car configs assume. Seating numbers are placeholders."
+  },
+  {
+   "id": "driver_a",
+   "name": "Driver A (placeholder)",
+   "mass_kg": 62,
+   "stature_mm": 1680,
+   "eye_height_mm": 710,
+   "head_top_mm": 900,
+   "chest_depth_mm": 220,
+   "cg_above_seat_mm": 220,
+   "grip_used_pct": 97,
+   "upshift_ms": 90,
+   "endurance_power_kW": null,
+   "notes": "Placeholder: replace with a real driver's measurements."
+  },
+  {
+   "id": "driver_b",
+   "name": "Driver B (placeholder)",
+   "mass_kg": 82,
+   "stature_mm": 1850,
+   "eye_height_mm": 770,
+   "head_top_mm": 980,
+   "chest_depth_mm": 250,
+   "cg_above_seat_mm": 240,
+   "grip_used_pct": 94,
+   "upshift_ms": 120,
+   "endurance_power_kW": null,
+   "notes": "Placeholder: replace with a real driver's measurements."
+  }
+ ]
+}

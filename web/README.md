@@ -66,6 +66,14 @@ Colours are the variables at the top of `site/assets/app.css`. `--navy` (`#000E2
 * **Car layout** (Chassis, Aero), **volumetric efficiency** and **gear ratios** (IC powertrain), **event tracks** (Overview).
 * **Quick adjust** sliders on every subsystem page, for the main values in everyday units.
 
+* **Joints**: "Add joint on tube" splits the selected tube, "Add joint" makes a free one, "Remove joint" takes a joint and
+  its tubes away; "Frame joints by number", "Hard points by number" and "Link lengths" are the same geometry as tables.
+* The hard-point editor draws the frame behind the suspension and keeps chassis-side points within a tab's length of a tube.
+* **Driver** page: profiles from `web/drivers.json` (edit it, or edit on the site and Export), the seating / sight-line
+  figure, and what the chosen driver changes in the car (mass, CG, grip scale, shift time, endurance power).
+* **Brakes**: rotor temperature through the lap and through endurance, repeated stops, corner hardware.
+* **Aero**: each wing element alone, from a panel method in the bridge (`airfoil()`); real section coordinates can be pasted in.
+
 Each of these writes an ordinary input override (`geom:frame`, `geom:hardpoints`, `geom:tracks`, or a config key),
 so Export / Import, sweeps and Run simulation all see it. With **Live preview** on, a change re-computes that page's
 subsystem data in the browser (`preview()` in the bridge, no lap); lap times change only with Run simulation.

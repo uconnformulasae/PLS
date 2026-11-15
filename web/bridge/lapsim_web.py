@@ -458,6 +458,10 @@ def run(car, overrides=None, events=None, detail=True):
         _safe(sub, "suspension", lambda: _suspension(veh))
         _safe(sub, "brakes", lambda: _brakes(veh))
         _safe(sub, "frame", lambda: frame_eval((overrides or {}).get("geom:frame"), cfg))
+        for e in ("autocross", "endurance"):
+            if e in res.laps:
+                n = len(res.endurance) if (e == "endurance" and res.endurance is not None) else 1
+                _safe(sub, f"brake_temps_{e}", lambda e=e, n=n: _brake_temps(veh, res.laps[e], n))
         _safe(sub, "powertrain", lambda: _ic_powertrain(veh, res.tables) if car == "ic" else _ev_powertrain(veh, res.tables))
         if car == "ev":
             import fsae_ev as ev
@@ -837,6 +841,15 @@ def geometry(car="ic"):
     cfg = _load(car)["vehicle"]
     out["track_choice"] = {e: Path(getattr(cfg.events, f"{e}_track")).name for e in ("autocross", "endurance")
                            if getattr(cfg.events, f"{e}_track")}
+    rho = float(cfg.aero.density())
+
+    def _elements():
+        rows = wing_elements()
+        for r in rows:                                     # each element alone, at its own angle, 15 m/s
+            r["result"] = airfoil(r["section"], r["chord"], r["angle_deg"], 15.0, rho)
+        return rows
+    _safe(out, "wing_elements", _elements)
+    out["air_density"] = _num(rho, 4)
     return out
 
 
@@ -874,3 +887,181 @@ def preview(car, overrides=None, blocks=PREVIEW_BLOCKS):
             else:
                 _safe(out, b, lambda: _ev_powertrain(veh, veh.tables0))
     return {"car": car, "blocks": out, "mass_kg": _num(veh.m), "notes": [str(n) for n in veh.warnings], "solve_s": _num(time.time() - t0, 3)}
+
+
+# --------------------------------------------------------------------------- brakes: rotor temperature
+def _brake_powers(veh, v, ax, braking):
+    """Friction power at ONE front and ONE rear brake along a lap [W]: the line pressure that gives each
+    braking point's deceleration (drag helps), times wheel speed."""
+    from fsae_vd import brakes
+    v = np.asarray(v, float)
+    g = np.where(braking, np.clip(-np.asarray(ax, float) / 9.80665, 0.0, None), 0.0)
+    gg, vg = np.linspace(0.0, max(2.5, float(g.max()) + 0.1), 14), np.linspace(0.0, max(40.0, float(v.max())), 7)
+    tab = np.array([[brakes.line_pressure_for(veh, float(a), float(u))[0] for u in vg] for a in gg])
+    from scipy.interpolate import RegularGridInterpolator
+    p_f = RegularGridInterpolator((gg, vg), tab)(np.column_stack([g, np.clip(v, 0, vg[-1])]))
+    p_f = np.where(g > 1e-3, p_f, 0.0)
+    return brakes.wheel_brake_power(veh.cfg, v, p_f)
+
+
+def _brake_temps(veh, lr, laps=1, T_air=25.0):
+    """Rotor temperatures over ``laps`` repeats of one simulated lap (lumped rotor model, fsae_vd.brakes)."""
+    from fsae_vd import brakes
+    front, rear = brakes.rotors(veh.cfg)
+    lim = np.asarray(lr.limit)
+    braking = (lim == "braking") if lim.dtype.kind in "OUS" else (np.asarray(lr.ax) < -0.5)
+    ch = getattr(lr, "pt", None) or {}
+    if "P_brake_front_kW" in ch and "P_brake_rear_kW" in ch:          # EV: the friction brakes' share after regen, per axle
+        Pf, Pr = 500.0 * np.asarray(ch["P_brake_front_kW"], float), 500.0 * np.asarray(ch["P_brake_rear_kW"], float)
+    else:
+        Pf, Pr = _brake_powers(veh, lr.v, lr.ax, braking)
+    t1, n = np.asarray(lr.t, float), int(max(1, laps))
+    t = np.concatenate([t1 + k * float(t1[-1]) for k in range(n)])
+    v = np.tile(np.asarray(lr.v, float), n)
+    Tf = brakes.rotor_temperature(t, np.tile(Pf, n), v, front, T_air, T_air)
+    Tr = brakes.rotor_temperature(t, np.tile(Pr, n), v, rear, T_air, T_air)
+    idx = _pick(len(t), 1400)
+    dt = np.diff(t1, append=t1[-1])
+    return {"t": _j(t[idx]), "T_front_C": _j(Tf[idx], 4), "T_rear_C": _j(Tr[idx], 4), "laps": n,
+            "peak_front_C": _num(Tf.max(), 4), "peak_rear_C": _num(Tr.max(), 4), "end_front_C": _num(Tf[-1], 4), "end_rear_C": _num(Tr[-1], 4),
+            "energy_front_kJ_per_lap": _num(float((Pf * dt).sum()) / 1e3, 4), "energy_rear_kJ_per_lap": _num(float((Pr * dt).sum()) / 1e3, 4),
+            "peak_power_front_kW": _num(Pf.max() / 1e3, 4), "peak_power_rear_kW": _num(Pr.max() / 1e3, 4),
+            "rear_rotor_assumed_equal_to_front": bool(getattr(rear, "rear_assumed", False)), "T_air_C": T_air}
+
+
+def brake_stops(car, overrides=None, v_hi_kph=100.0, v_lo_kph=30.0, n=15, decel_g=1.4, accel_g=0.6):
+    """Rotor temperatures over repeated identical stops (fade / sizing check)."""
+    from fsae_vd import brakes
+    objs = _load(car, overrides)
+    if car == "ic":
+        import fsae_pt as pt
+        veh = pt.PTVehicle(objs["vehicle"], objs["pt"])
+    else:
+        import fsae_ev as ev
+        veh = ev.EVVehicle(objs["vehicle"], objs["ev"], objs["pack"])
+    df, peaks = brakes.repeated_stops(veh, v_hi_kph / 3.6, v_lo_kph / 3.6, int(n), float(decel_g), float(accel_g))
+    idx = _pick(len(df), 1400)
+    ef, er = brakes.stop_energy(veh, v_hi_kph / 3.6, v_lo_kph / 3.6)
+    return {"t": _j(df["t"].to_numpy()[idx]), "T_front_C": _j(df["T_front_C"].to_numpy()[idx], 4), "T_rear_C": _j(df["T_rear_C"].to_numpy()[idx], 4),
+            "v_kph": _j(3.6 * df["v"].to_numpy()[idx], 4), "peaks_front_C": _j(peaks["T_front_C"].to_numpy(), 4), "peaks_rear_C": _j(peaks["T_rear_C"].to_numpy(), 4),
+            "energy_per_stop_front_kJ": _num(ef / 1e3, 4), "energy_per_stop_rear_kJ": _num(er / 1e3, 4), "p_front_peak_bar": _num(df["p_front_bar"].max(), 4)}
+
+
+# --------------------------------------------------------------------------- one airfoil on its own
+def _naca4(code, n=90):
+    """Unit-chord NACA 4-digit section, upper trailing edge -> leading edge -> lower trailing edge."""
+    code = str(code).lower().replace("naca", "").strip().zfill(4)
+    if not (code.isdigit() and len(code) == 4):
+        raise ValueError(f"'{code}' is not a NACA 4-digit code (for example 6412)")
+    m, p, t = int(code[0]) / 100.0, int(code[1]) / 10.0, int(code[2:]) / 100.0
+    x = 0.5 * (1 - np.cos(np.linspace(0, np.pi, n)))
+    yt = 5 * t * (0.2969 * np.sqrt(x) - 0.1260 * x - 0.3516 * x ** 2 + 0.2843 * x ** 3 - 0.1036 * x ** 4)
+    if m > 0 and p > 0:
+        yc = np.where(x < p, m / p ** 2 * (2 * p * x - x ** 2), m / (1 - p) ** 2 * ((1 - 2 * p) + 2 * p * x - x ** 2))
+        dyc = np.where(x < p, 2 * m / p ** 2 * (p - x), 2 * m / (1 - p) ** 2 * (p - x))
+    else:
+        yc, dyc = np.zeros_like(x), np.zeros_like(x)
+    th = np.arctan(dyc)
+    up = np.stack([(x - yt * np.sin(th))[::-1], (yc + yt * np.cos(th))[::-1]], axis=1)
+    lo = np.stack([(x + yt * np.sin(th))[1:], (yc - yt * np.cos(th))[1:]], axis=1)
+    return np.vstack([up, lo])
+
+
+def _section_from_text(text, n=90):
+    """Coordinates pasted from a Selig .dat file (x y per line, trailing edge -> upper -> leading edge -> lower),
+    scaled to unit chord and re-spaced."""
+    pts = []
+    for ln in str(text).splitlines():
+        c = ln.replace(",", " ").split()
+        try:
+            pts.append([float(c[0]), float(c[1])])
+        except (ValueError, IndexError):
+            continue
+    a = np.array(pts)
+    if len(a) < 12:
+        raise ValueError("need at least 12 coordinate rows (x y per line, Selig order)")
+    if a[0, 0] > 1.5:                         # Lednicer: counts line, then upper LE->TE and lower LE->TE
+        nu = int(a[0, 0])
+        a = np.vstack([a[1:1 + nu][::-1], a[1 + nu + 1:]])
+    a = a - a[np.argmin(a[:, 0])]
+    a = a / (a[:, 0].max() or 1.0)
+    d = np.r_[0, np.cumsum(np.hypot(*np.diff(a, axis=0).T))]
+    le = int(np.argmin(a[:, 0]))
+    beta = np.linspace(0, np.pi, n)
+    s_up = d[le] * 0.5 * (1 - np.cos(beta))                      # cosine spacing: dense at both ends of each surface
+    s_lo = d[le] + (d[-1] - d[le]) * 0.5 * (1 - np.cos(beta))[1:]
+    ss = np.r_[s_up, s_lo]
+    return np.stack([np.interp(ss, d, a[:, 0]), np.interp(ss, d, a[:, 1])], axis=1)
+
+
+def _panel(poly, alpha_deg):
+    """Hess-Smith panel method (sources + one vortex strength, Kutta condition) for one closed section in
+    uniform flow. Inviscid, incompressible: no stall and no profile drag. Returns (cl, cm about c/4, xm, cp)."""
+    P = np.asarray(poly, float)[::-1]                 # lower TE -> LE -> upper TE (clockwise)
+    if np.hypot(*(P[0] - P[-1])) > 1e-9:
+        P = np.vstack([P, P[0]])
+    x, y = P[:, 0], P[:, 1]
+    N = len(x) - 1
+    xm, ym = 0.5 * (x[:-1] + x[1:]), 0.5 * (y[:-1] + y[1:])
+    dx, dy = np.diff(x), np.diff(y)
+    S, th = np.hypot(dx, dy), np.arctan2(dy, dx)
+    al = np.radians(alpha_deg)
+    X1, Y1 = xm[:, None] - x[None, :-1], ym[:, None] - y[None, :-1]
+    X2, Y2 = xm[:, None] - x[None, 1:], ym[:, None] - y[None, 1:]
+    F = np.log(np.hypot(X2, Y2) / np.hypot(X1, Y1))
+    B = np.arctan2(Y2 * X1 - X2 * Y1, X2 * X1 + Y2 * Y1)
+    np.fill_diagonal(F, 0.0)
+    np.fill_diagonal(B, np.pi)
+    D = th[:, None] - th[None, :]
+    sn, cs = np.sin(D), np.cos(D)
+    A = np.zeros((N + 1, N + 1))
+    A[:N, :N] = (sn * F + cs * B) / (2 * np.pi)
+    A[:N, N] = ((cs * F - sn * B) / (2 * np.pi)).sum(1)
+    b = np.zeros(N + 1)
+    b[:N] = np.sin(th - al)
+    Tq = (sn * B - cs * F) / (2 * np.pi)              # tangential velocity from each source panel
+    Tg = (sn * F + cs * B) / (2 * np.pi)              # ... and from the vortex on each panel
+    for i in (0, N - 1):
+        A[N, :N] += Tq[i]
+        A[N, N] += Tg[i].sum()
+    b[N] = -np.cos(th[0] - al) - np.cos(th[N - 1] - al)
+    sol = np.linalg.solve(A, b)
+    q, gam = sol[:N], sol[N]
+    vt = np.cos(th - al) + Tq @ q + gam * Tg.sum(1)
+    cp = 1 - vt ** 2
+    c = x.max() - x.min()
+    fx, fy = (cp * dy).sum() / c, -(cp * dx).sum() / c                 # pressure force / (q c), body axes
+    cl = fy * np.cos(al) - fx * np.sin(al)
+    cm = ((cp * dx) * (xm - x.min() - 0.25 * c) + (cp * dy) * ym).sum() / c ** 2
+    return float(cl), float(cm), xm, ym, cp
+
+
+def airfoil(section="naca4412", chord=0.35, angle_deg=5.0, speed=15.0, rho=1.12, coordinates=None):
+    """One section alone in free air: shape, pressure distribution, lift and moment at ``angle_deg``, and the lift
+    curve. Loads are per metre of span. For a wing element the angle is its chord angle to the airflow."""
+    poly = _section_from_text(coordinates) if coordinates else _naca4(section)
+    cl, cm, xm, ym, cp = _panel(poly, angle_deg)
+    al = np.arange(-6.0, 20.1, 2.0)
+    curve = [_panel(poly, a)[0] for a in al]
+    qd = 0.5 * rho * speed ** 2
+    le = int(np.argmin(poly[:, 0]))
+    thick = float(np.max(np.interp(np.linspace(0, 1, 60), poly[:le + 1][::-1, 0], poly[:le + 1][::-1, 1])
+                         - np.interp(np.linspace(0, 1, 60), poly[le:, 0], poly[le:, 1])))
+    return {"x": _j(poly[:, 0]), "y": _j(poly[:, 1]), "cp_x": _j(xm), "cp_y": _j(ym), "cp": _j(cp, 4),
+            "cl": _num(cl, 4), "cm_quarter_chord": _num(cm, 4), "alpha": _j(al), "cl_curve": _j(np.array(curve), 4),
+            "cl_per_deg": _num((curve[4] - curve[3]) / 2.0, 4), "alpha_zero_lift_deg": _num(float(np.interp(0.0, curve, al)), 3),
+            "lift_N_per_m": _num(qd * chord * cl, 4), "moment_Nm_per_m": _num(qd * chord ** 2 * cm, 4), "thickness_%": _num(100 * thick, 3),
+            "reynolds": _num(rho * speed * chord / 1.81e-5, 3), "q_Pa": _num(qd, 4), "min_cp": _num(float(cp.min()), 4)}
+
+
+def wing_elements():
+    """The wing elements listed in configs/ct17_cfd.yaml: [{wing, element, section, chord, angle_deg, note}]."""
+    import yaml
+    f = IC / "configs" / "ct17_cfd.yaml"
+    y = yaml.safe_load(f.read_text()) or {}
+    out = []
+    for wing in ("front_wing", "rear_wing"):
+        for k, e in enumerate((y.get(wing) or {}).get("elements") or []):
+            out.append({"wing": wing, "element": k + 1, "section": str(e.get("section", "")), "chord": _num(e.get("chord")),
+                        "angle_deg": _num(e.get("angle_deg")), "gap": _num(e.get("gap")), "overlap": _num(e.get("overlap"))})
+    return out

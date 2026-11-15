@@ -6,7 +6,7 @@
 
 // ------------------------------------------------------------------ state
 const S = {
-  car: "ic", page: "overview", event: "autocross",
+  car: "ic", page: "about", event: "autocross",
   data: { ic: null, ev: null },          // {schema, result, tracks, studies}
   base: { ic: null, ev: null },          // baseline result, for "vs baseline"
   overrides: { ic: {}, ev: {} },         // edited inputs, not yet run
@@ -47,8 +47,10 @@ const pretty = (k) => k.replace(/_/g, " ");
 
 // ------------------------------------------------------------------ pages
 const PAGES = [
-  { id: "overview", label: "Overview", groups: ["events"], lap: true,
-    intro: "Event times and points, where the car is limited around the lap, and what the model is assuming." },
+  { id: "about", label: "Home", intro: "Orientation: what this site is, what each section does and how to use it." },
+  { id: "overview", label: "Full car simulation", groups: ["events"], lap: true,
+    intro: "The whole car on all four events: times and points, where it is limited around the lap, and what the model is assuming. The driver chosen under Driver is the one in the car." },
+  { id: "drivers", label: "Driver", intro: "Who is in the car. A driver's mass, seating and driving numbers go into the full car simulation." },
   { id: "lap", label: "Lap explorer", lap: true, intro: "Every channel the simulation produces, along any event. Pick channels to stack them on a shared axis." },
   { id: "powertrain", label: "Powertrain", groups: ["powertrain"], lap: true,
     intro: (c) => c === "ic" ? "Restricted engine, six-speed gearbox, chain drive and differential." : "Motor, inverter, reduction, regen and the limits that cap drive torque at each speed." },
@@ -61,7 +63,6 @@ const PAGES = [
   { id: "chassis", label: "Chassis & frame", groups: ["chassis"], intro: "Mass, geometry and the spaceframe tube model." },
   { id: "studies", label: "Studies", intro: "Sweep any input and see what it does to each event. Studies run in your browser." },
   { id: "inputs", label: "All inputs", intro: "Every input of the model. Values are SI unless you type a unit, e.g. 350 lbf/in, 11 in, 80 kW." },
-  { id: "about", label: "About" },
 ];
 const val = (v) => (typeof v === "function" ? v(S.car) : v);
 
@@ -338,7 +339,38 @@ V("brakes", "balance", "Brake balance", "Front share of brake force against the 
 });
 V("brakes", "brk_table", "Balance table", "Line pressure and which axle locks first.", (b) => b.append(table(need(SUB().brakes).balance)));
 V("brakes", "brk_lap", "Braking around the lap", "", (b) => { const p = plotDiv(); b.append(p); lapStack(p, [["ax"], ["F_brake_front", "F_brake_rear", "F_regen"], ["P_brake_front_kW", "P_brake_rear_kW", "P_regen_kW"]]); }, { wide: true });
-V("brakes", "brk_hw", "Brake hardware", "", (b) => b.append(kvTable(need(SUB().brakes).hardware)), { off: true });
+V("brakes", "brk_temp", "Rotor temperature", "Front and rear rotor through the selected event, from the brake power the lap needs. Endurance repeats the lap for every lap of the event.", (b) => {
+  const ev = S.event === "endurance" ? "endurance" : "autocross", d = need(SUB()["brake_temps_" + ev]), p = plotDiv("tall");
+  b.append(el("div", { class: "kpis" },
+    el("div", { class: "kpi" }, el("div", { class: "k" }, "Peak front rotor"), el("div", { class: "v" }, fmt(d.peak_front_C, 3), el("small", {}, "°C"))),
+    el("div", { class: "kpi" }, el("div", { class: "k" }, "Peak rear rotor"), el("div", { class: "v" }, fmt(d.peak_rear_C, 3), el("small", {}, "°C"))),
+    el("div", { class: "kpi" }, el("div", { class: "k" }, "Heat per lap, one front brake"), el("div", { class: "v" }, fmt(d.energy_front_kJ_per_lap, 3), el("small", {}, "kJ"))),
+    el("div", { class: "kpi" }, el("div", { class: "k" }, "Peak power, one front brake"), el("div", { class: "v" }, fmt(d.peak_power_front_kW, 3), el("small", {}, "kW")))), p);
+  plot(p, [line(d.t.map((x) => x / 60), d.T_front_C, "front rotor"), line(d.t.map((x) => x / 60), d.T_rear_C, "rear rotor", { line: { width: 2, color: PAL[1] } })],
+    { xaxis: { title: `${ev} time [min]` }, yaxis: { title: "rotor temperature [°C]" } });
+  b.append(el("div", { class: "sub" }, `${ev === "endurance" ? d.laps + " laps, no driver-change cooling. " : "One lap from ambient. "}The car brakes at the tire limit everywhere, so this is the upper bound for a driver.`
+    + (d.rear_rotor_assumed_equal_to_front ? " Rear rotor mass and area are not in the config: taken equal to the front." : "")));
+}, { wide: true });
+V("brakes", "brk_stops", "Repeated stops", "A fade and sizing check: brake from one speed to another, accelerate back, repeat. Peaks level off where cooling per cycle equals heating.", (b) => {
+  const f = (label, v, attrs) => { const i = el("input", Object.assign({ type: "number", value: v, style: "width:78px" }, attrs)); return [el("label", {}, label, " ", i), i]; };
+  const [l1, hi] = f("from [km/h]", 100, { min: 20, max: 160 }), [l2, lo] = f("to [km/h]", 30, { min: 0, max: 120 }), [l3, n] = f("stops", 15, { min: 2, max: 60 }), [l4, g] = f("braking [g]", 1.4, { min: 0.3, max: 2.5, step: 0.1 }), [l5, a] = f("accelerating [g]", 0.6, { min: 0.1, max: 1.5, step: 0.1 });
+  const out = el("div"), go = el("button", { class: "btn navy", onclick: async () => {
+    go.disabled = true; out.replaceChildren(el("div", { class: "muted" }, "Running…"));
+    try {
+      const d = await call("brake_stops", [S.car, S.overrides[S.car], +hi.value, +lo.value, +n.value, +g.value, +a.value]), p = plotDiv();
+      out.replaceChildren(p, el("div", { class: "sub" }, `Each stop puts ${fmt(d.energy_per_stop_front_kJ, 3)} kJ into one front brake and ${fmt(d.energy_per_stop_rear_kJ, 3)} kJ into one rear. Peak front line pressure ${fmt(d.p_front_peak_bar, 3)} bar. Last-stop peaks: ${fmt(d.peaks_front_C.at(-1), 3)} °C front, ${fmt(d.peaks_rear_C.at(-1), 3)} °C rear.`));
+      plot(p, [line(d.t, d.T_front_C, "front rotor"), line(d.t, d.T_rear_C, "rear rotor", { line: { width: 2, color: PAL[1] } })], { xaxis: { title: "time [s]" }, yaxis: { title: "rotor temperature [°C]" } });
+    } catch (e) { out.replaceChildren(el("div", { class: "err" }, String(e.message || e))); }
+    go.disabled = false; } }, "Run stops");
+  b.append(el("div", { class: "ctl" }, l1, l2, l3, l4, l5, go), out);
+}, { wide: true });
+V("brakes", "brk_hw", "Corner hardware", "What the caliper, pads and rotor in the config give, next to the torque fitted from a log. Empty rows need a value under Quick adjust or Inputs.", (b) => {
+  const h = need(SUB().brakes).hardware, N = { torque_per_bar_front_fit: "Front torque per bar, fitted from the log [N·m/bar]", torque_per_bar_rear_fit: "Rear torque per bar, fitted from the log [N·m/bar]",
+    torque_per_bar_front_hardware: "Front torque per bar from the hardware [N·m/bar]", torque_per_bar_rear_hardware: "Rear torque per bar from the hardware [N·m/bar]",
+    implied_pad_mu_front: "Pad friction that would match the fit, front", implied_pad_mu_rear: "Pad friction that would match the fit, rear", clamp_force_front_N: "Front clamp force at the reference pressure [N]",
+    pad_pressure_front_MPa: "Front pad pressure [MPa]", pad_pressure_rear_MPa: "Rear pad pressure [MPa]", p_ref_bar: "Reference line pressure [bar]", force_fraction_front_at_p_ref: "Front share of brake force at the reference pressure" };
+  b.append(table({ columns: ["quantity", "value"], rows: Object.entries(h).map(([k, v]) => [N[k] || pretty(k), v == null ? "needs hardware values" : v]) }));
+}, { wide: true });
 
 // ---- chassis
 // ---- studies
@@ -380,7 +412,7 @@ V("studies", "gsweep", "Reduction ratio", "Baseline car. Acceleration, autocross
   studyChart(b, "gearing_sweep", "ratio", [["acceleration_s", "acceleration [s]"], ["autocross_s", "autocross [s]"], ["top_speed_kph", "top speed [km/h]"]], "overall reduction ratio"), { car: "ev" });
 
 { const B = { powertrain: ["eng_torque", "eng_power", "tractive", "gears", "ev_torque", "ev_power", "ev_force", "ev_eff"], ggv: ["gg", "aymax"],
-    suspension: ["sus_axles", "sus_car", "camber", "rc", "toe", "damperlen"], aero: ["downforce", "drag", "balance", "dragpower", "aerocomp"], brakes: ["balance", "brk_table", "brk_hw"] };
+    suspension: ["sus_axles", "sus_car", "camber", "rc", "toe", "damperlen"], aero: ["downforce", "drag", "balance", "dragpower", "aerocomp"], brakes: ["brk_hw", "balance", "brk_table", "brk_hw"] };
   for (const [b, ids] of Object.entries(B)) for (const v of VISUALS) if (ids.includes(v.id)) v.blocks = [b]; }
 
 // ------------------------------------------------------------------ inputs panel
@@ -463,28 +495,40 @@ async function doPreview() {
 
 // ------------------------------------------------------------------ render
 function about() {
-  const m = S.meta;
-  return el("div", { class: "card wide prose", html: `
-<h3>WHAT IS THIS?</h3>
-<p>A website interface for a custom, UConn Formula SAE predictive lap simulation for the design of both the IC and EV cars, with CT-17 IC and CT-17 EV as the baseline. The page opens with these baseline results already computed.
-When you change an input and press <b>Run simulation</b>, the same Python model the notebooks use (<code>fsae_vd</code>, <code>fsae_pt</code>, <code>fsae_ev</code>) runs inside your browser.
-The first run downloads the Python runtime (about 40 MB, cached afterwards) and takes longer than the ones after it.</p>
-<h3>WHAT RUNS HERE?</h3>
-<ul><li>Quasi-steady-state four-wheel vehicle model, tire and traction envelope, hardpoint kinematics, component aero model.</li>
+  const m = S.meta, go = (id) => { S.page = id; location.hash = `${S.car}/${id}`; render(); window.scrollTo(0, 0); };
+  const GUIDE = [["overview", "Run the whole car on acceleration, skidpad, autocross and endurance. Start here for lap times and points."],
+    ["drivers", "Pick who is driving: mass, seating position, sight line, and their personal grip and shift numbers."],
+    ["lap", "Plot any channel the simulation produces along any event."],
+    ["powertrain", "Engine or motor, gearing and differential, with a draggable breathing curve and gear sliders."],
+    ["energy", "Endurance lap by lap: accumulator state for the EV, cooling and fuel for the IC car."],
+    ["tires", "The grip envelope the solver drives on and the wheel loads."],
+    ["suspension", "Drag the hard points or type them in; kinematics are re-solved against the frame."],
+    ["aero", "Downforce, drag and balance, where the loads act, and each wing element modelled on its own."],
+    ["brakes", "Balance, rotor temperatures, pad friction and the corner hardware."],
+    ["chassis", "Move, add or remove frame joints, change tube sizes and materials, and see mass and stiffness."],
+    ["studies", "Sweep any input and see what it does to each event."],
+    ["inputs", "Every input of the model in one searchable list."]];
+  const cards = GUIDE.map(([id, text]) => { const p = PAGES.find((x) => x.id === id);
+    return el("button", { class: "guide", onclick: () => go(id) }, el("b", {}, val(p.label)), el("span", {}, text)); });
+  return [el("div", { class: "card wide prose", html: `
+<h3>What this is</h3>
+<p>The team's predictive lap simulation for the CT-17 IC and CT-17 EV. Pick the car at the top right, then a section. Every page opens on the baseline results.
+Change anything (a slider, a number, a dragged point) and press <b>Run simulation</b>: the same Python model the notebooks use runs inside your browser.
+With <b>Live preview</b> on, a page's own curves follow your changes without running the lap.</p>` }),
+    el("div", { class: "card wide" }, el("h3", {}, "Sections"), el("div", { class: "guides" }, cards)),
+    el("div", { class: "card wide prose", html: `
+<h3>What runs here</h3>
+<ul><li>Quasi-steady-state four-wheel vehicle model, tire and traction envelope, hard-point kinematics, component aero model.</li>
 <li>IC powertrain: restricted engine, gearbox, chain, differential, cooling, fuel. EV powertrain: motor, inverter, accumulator, regen.</li>
 <li>All four dynamic events, endurance lap by lap, input sweeps, and the EV power-limit and gearing studies.</li>
-<li>The spaceframe beam model: move nodes, change tube sizes and materials, and see mass, CG and torsional stiffness.</li>
-<li>Suspension kinematics from the hard points: drag a point and the camber, roll-centre and bump-steer curves follow.</li></ul>
-<h3>READING THE NUMBERS</h3>
-<p>Inputs are stored in SI. Type a unit to enter anything else: <code>350 lbf/in</code>, <code>11 in</code>, <code>80 kW</code>, <code>245 kg</code>. NOTE: Every EV input is currently a placeholder; see Accumulator → EV input status.</p>
-<h3>READING THE GRAPHS</h3>
-<p>The following are PDFs of papers designed to help assist with the usage and interpretation of the graphical representations produced by the predictive lap simulation. The documentation includes graphics produced in the Jupyter notebooks [significantly more figures] as well as the website.</p>
-<ul><li>Powertrain Figure Guide: <a href="https://drive.google.com/file/d/1YBwXQAmsz8UNeMr8VXpKIFec95trGj-K/view?usp=sharing" target="_blank">Predictive Lap Simulation – Graph Interpretation Guide (PDF)</a></li>
-</ul>
-<h3>DOCUMENTATION</h3>
-<p>The following are PDF's of papers designed to help assist with the actual construction and modification of the predictive lap simulation source code. These files outline design decisions, important physical and mathematical implementations, numerical methods, data processing and more.</p>
-<ul><li>Powertrain Figure Guide: <a href="https://drive.google.com/file/d/1YBwXQAmsz8UNeMr8VXpKIFec95trGj-K/view?usp=sharing" target="_blank">Predictive Lap Simulation – Graph Interpretation Guide (PDF)</a></li>
-<p class="muted">Built by Haley Harper, UConn Formula SAE, Data Acquisition</p>`});
+<li>The spaceframe beam model, suspension kinematics, rotor temperatures, and a panel-method model of single wing sections.</li></ul>
+<h3>What does not run in a browser</h3>
+<ul><li>Multibody minimum-lap-time optimal control (CasADi + IPOPT) and the 3-D CFD solver (Numba). Run those from the notebooks.</li>
+<li>Reading AiM <code>.xrk</code> logs and fitting from logged or TTC data. The site uses the values already in the config files.</li></ul>
+<h3>Reading the numbers</h3>
+<p>Inputs are stored in SI. Type a unit to enter anything else: <code>350 lbf/in</code>, <code>11 in</code>, <code>80 kW</code>, <code>245 kg</code>. Every EV input is currently a placeholder; see Accumulator → EV input status.
+The first run downloads the Python runtime (about 40 MB, cached afterwards).</p>
+<p class="muted">Built ${m.built || "?"}${m.commit ? " · commit " + m.commit : ""} · simulation bundle ${m.bundle_kB || "?"} kB</p>` })];
 }
 
 function render() {
@@ -495,6 +539,7 @@ function render() {
   if (!S.data[car]) { main.replaceChildren(el("div", { class: "muted" }, "Loading…")); return; }
   const head = el("div", { class: "page-head" }, el("div", {}, el("h1", {}, val(page.label)), page.intro ? el("p", {}, val(page.intro)) : null));
   if (page.id === "about") return main.replaceChildren(head, el("div", { class: "grid" }, about()));
+  if (page.id !== "drivers" && typeof driverBanner === "function") head.append(driverBanner());
   if (page.id === "inputs") return main.replaceChildren(head, inputsPanel(null, true));
   const vis = VISUALS.filter((v) => v.page === page.id && (!v.car || v.car === car)).sort((a, b) => (b.first ? 1 : 0) - (a.first ? 1 : 0));   // interactive figures lead the page
   const isOn = (v) => (v.id in S.hidden ? !S.hidden[v.id] : !v.off);
@@ -624,6 +669,7 @@ async function setCar(car) {
 <p>${String(e.message || e)}</p><p>From the <code>fsae_lapsim</code> folder run <code>python web/build.py --serve</code> and open <code>http://localhost:8000</code>.</p>` }));
     return;
   }
+  if (typeof DR !== "undefined" && DR.chosen().id !== "design") DR.apply();      // the driver picked last time is still in the car
   render(); pending();
 }
 
@@ -635,6 +681,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("#reset").onclick = () => { S.overrides[S.car] = {}; if (typeof FR !== "undefined") delete FR._w[S.car]; render(); pending(); };
   $("#live").onclick = () => { S.live = !S.live; localStorage.setItem("lapsim.live", S.live ? "1" : "0"); pending(); };
   try { S.meta = await getJSON("data/meta.json"); } catch (e) { /* optional */ }
+  try { S.driverFile = await getJSON("data/drivers.json"); } catch (e) { S.driverFile = null; }
   $("#buildinfo").textContent = "© Haley Harper" + (S.meta.built ? `, Built ${S.meta.built}` : "");
   await setCar(S.car);
   window.addEventListener("hashchange", () => {

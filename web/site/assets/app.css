@@ -217,3 +217,20 @@ table.edit tbody tr { cursor: default; }
   .quickgrid { grid-template-columns: 1fr; } .quick { grid-template-columns: 1fr; gap: 2px; padding: 6px; } .qval input { font-size: 16px; width: 96px; }
   .coordbar input, .coordbar select, table.edit input, table.edit select { font-size: 16px; }
 }
+
+/* ---------- grids, guides, drivers */
+svg.view .grid.major { stroke: #dbe1ec; }
+svg.view .tick { fill: #9aa3b5; font-family: var(--font); } svg.view .tick.name { fill: var(--ink-2); font-weight: 700; }
+.guides { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; margin-top: 10px; }
+.guide { text-align: left; border: 1px solid var(--line); border-left: 4px solid var(--navy); border-radius: 8px; background: #fff; padding: 10px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 3px; }
+.guide:hover { border-color: var(--navy); background: #f7f9fd; } .guide b { color: var(--navy); font-size: 14px; } .guide span { color: var(--ink-2); font-size: 12.5px; }
+.grid.inner { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin-top: 6px; }
+.driverchip { font-size: 12.5px; color: var(--ink-2); border: 1px solid var(--line); background: #fff; border-radius: 99px; padding: 5px 12px; cursor: pointer; white-space: nowrap; }
+.driverchip b { color: var(--navy); }
+.dform { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px 18px; margin: 10px 0; }
+.dform label { display: grid; grid-template-columns: minmax(0, 1fr) 104px auto; gap: 6px; align-items: center; font-size: 12.5px; color: var(--ink-2); }
+.dform label.widef { grid-column: 1 / -1; grid-template-columns: 110px minmax(0, 1fr); }
+.dform input { padding: 5px 6px; text-align: right; } .dform label.widef input { text-align: left; } .dform .u { font-size: 11px; color: var(--ink-3); min-width: 26px; }
+textarea { border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; }
+@media (max-width: 600px) { .dform input { font-size: 16px; } }
+.card.prose { max-width: none; } .card.prose p, .card.prose ul { max-width: 95ch; }

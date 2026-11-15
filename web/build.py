@@ -1,8 +1,8 @@
 #!/usr/bin/env python
-"""Build the lap-simulation into a website (a static site, ready for GitHub Pages).
+"""Build the lap-simulation website into web/site/ (a static site, ready for GitHub Pages).
 
-    python web/build.py                # bundle the simulation + write the baseline results
-    python web/build.py --serve        # ... then serve it at http://localhost:8000
+    python web/build.py            # bundle the simulation + write the baseline results
+    python web/build.py --serve    # ... then serve it at http://localhost:8000
     python web/build.py --no-studies   # skip the EV power-limit / gearing studies (faster)
 
 What it writes:
@@ -29,7 +29,7 @@ import zipfile
 from pathlib import Path
 
 WEB = Path(__file__).resolve().parent
-# fsae_lapsim/ (the folder holding IC/ and ev/). If web/ lives in another repository, point at it:
+# fsae_lapsim/ (the folder holding IC/ and ev/). When web/ lives in another repository, point at it:
 #   LAPSIM_ROOT=/path/to/fsae_lapsim python web/build.py
 ROOT = Path(os.environ.get("LAPSIM_ROOT") or WEB.parent).resolve()
 SITE = WEB / "site"
@@ -39,7 +39,7 @@ BUNDLE = [
     ("IC/fsae_vd", ["*.py"]),
     ("IC/fsae_pt", ["*.py"]),
     ("IC/fsae_frame", ["*.py"]),
-    ("IC/configs", ["ct17_baseline.yaml", "ct17_powertrain.yaml"]),
+    ("IC/configs", ["ct17_baseline.yaml", "ct17_powertrain.yaml", "ct17_cfd.yaml"]),
     ("IC/configs/tracks", ["*.yaml"]),
     ("IC/data/hardpoints", ["*.csv"]),
     ("IC/data/dyno", ["*.csv"]),
@@ -108,7 +108,7 @@ def script_copies():
     import base64
     def write(path, key, js_value):
         path.write_text(f"(window.__LAPSIM=window.__LAPSIM||{{}})[{json.dumps(key)}]={js_value};\n")
-    for name in ("ic", "ev", "meta"):
+    for name in ("ic", "ev", "meta", "drivers"):
         f = SITE / "data" / f"{name}.json"
         if f.exists():
             write(f.with_suffix(".js"), f"data/{name}.json", json.dumps(json.loads(f.read_text()), separators=(",", ":"), allow_nan=False))
@@ -152,6 +152,8 @@ def main():
     if not a.bundle_only:
         print("baseline results (run from the bundle):")
         baseline(z, studies=not a.no_studies)
+    import shutil
+    shutil.copyfile(WEB / "drivers.json", SITE / "data" / "drivers.json")
     meta = {"built": dt.datetime.now().strftime("%Y-%m-%d %H:%M"), "commit": git_commit(),
             "bundle_kB": round(z.stat().st_size / 1e3), "files": [_rel(f) for f in files]}
     (SITE / "data" / "meta.json").write_text(json.dumps(meta, indent=1))

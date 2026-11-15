@@ -1,7 +1,7 @@
 {
- "built": "2026-11-14 00:48",
+ "built": "2026-11-14 19:34",
  "commit": "8aa80a3",
- "bundle_kB": 573,
+ "bundle_kB": 581,
  "files": [
   "IC/fsae_vd/__init__.py",
   "IC/fsae_vd/adjust.py",
@@ -55,6 +55,7 @@
   "IC/fsae_frame/tubes.py",
   "IC/configs/ct17_baseline.yaml",
   "IC/configs/ct17_powertrain.yaml",
+  "IC/configs/ct17_cfd.yaml",
   "IC/configs/tracks/ic_2026.yaml",
   "IC/data/hardpoints/CT17_front.csv",
   "IC/data/hardpoints/CT17_rear.csv",
