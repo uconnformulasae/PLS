@@ -78,6 +78,10 @@ Colours are the variables at the top of `site/assets/app.css`. `--navy` (`#000E2
   the page on side-view slices built from `configs/ct17_cfd.yaml` (`tunnel_shapes()` in the bridge). Flow patterns and
   the direction of a change only: it is two-dimensional and far below the car's Reynolds number.
 
+* **3-D flow replay** on the Aero page: the saved `fsae_cfd` runs (surface pressure, streamlines, smoke) rotated in the
+  page. `python web/export_cfd.py` turns the runs in `IC/results/cfd/runs/` into `site/data/cfd/*.json`; run it natively
+  (it needs numba and the wing STL files) before `build.py`. These files hold the car's surface mesh.
+
 Each of these writes an ordinary input override (`geom:frame`, `geom:hardpoints`, `geom:tracks`, or a config key),
 so Export / Import, sweeps and Run simulation all see it. With **Live preview** on, a change re-computes that page's
 subsystem data in the browser (`preview()` in the bridge, no lap); lap times change only with Run simulation.

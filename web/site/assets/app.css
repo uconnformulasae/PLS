@@ -240,3 +240,6 @@ textarea { border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; 
 .tunnel canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .tunnel .tfield { image-rendering: auto; }
 .tslider { display: inline-flex; align-items: center; gap: 6px; } .tslider b { color: var(--navy); min-width: 58px; font-variant-numeric: tabular-nums; }
+
+.plot.cfd3d { height: 520px; border: 1px solid var(--line-2); border-radius: 8px; overflow: hidden; }
+@media (max-width: 600px) { .plot.cfd3d { height: 360px; } }

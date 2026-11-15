@@ -221,3 +221,87 @@ V("aero", "tunnel", "Virtual wind tunnel (2-D)", "Air flowing over a side-view s
 }, { wide: true, first: true });
 // the tunnel sits just below the load-position figure on the Aero page
 { const i = VISUALS.findIndex((v) => v.id === "tunnel"), m = VISUALS.splice(i, 1)[0]; VISUALS.splice(VISUALS.findIndex((v) => v.id === "aero_layout") + 1, 0, m); }
+
+// ------------------------------------------------------------------ 3-D flow replay (saved fsae_cfd runs)
+/* Replays the 3-D CFD runs exported by web/export_cfd.py (data/cfd/*.json): the car's surface coloured by pressure,
+   streamlines of the time-averaged flow, and smoke carried along them. Nothing is solved in the page. */
+const CF = { state: "base", cache: {}, hide: new Set(["frame", "suspension"]), play: window.innerWidth >= 900, lines: true, view: "front34" };
+const CF_VIEWS = { front34: ["3/4 front left", { x: -0.82, y: -0.86, z: 0.42 }], rear34: ["3/4 rear left", { x: 0.9, y: -0.86, z: 0.46 }], side: ["Side", { x: 0.03, y: -1.35, z: 0.14 }], top: ["Top", { x: 0.01, y: -0.01, z: 1.5 }], front: ["Front", { x: -1.35, y: 0, z: 0.2 }] };
+const CF_CP = [[0, "#1f5fbf"], [0.5, "#7fadea"], [0.7143, "#e8ebf0"], [1, "#eb6834"]];      // Cp from -2.5 (suction, blue) through 0 (grey) to +1 (orange)
+V("aero", "cfd3d", "3-D flow replay", "The saved 3-D CFD runs of the whole car: surface pressure, streamlines and smoke. Drag to rotate, scroll or pinch to zoom.", (b, ctx) => {
+  const holder = el("div"), p = el("div", { class: "plot cfd3d" }), tiles = el("div", { class: "kpis" }), ctl = el("div", { class: "ctl" }), ctl2 = el("div", { class: "ctl" }), info = el("div", { class: "sub" }), tbl = el("details", {});
+  b.append(holder); holder.append(el("div", { class: "muted" }, "Loading the CFD runs…"));
+  let timer = 0, data = null, visible = true, tau = 0, smokeAt = -1;
+  const load = async (state) => {
+    if (!CF.index) CF.index = await getJSON("data/cfd/index.json");
+    if (!CF.faces) CF.faces = (await getJSON("data/cfd/faces.json")).faces;
+    if (!CF.cache[state]) {
+      const d = await getJSON(`data/cfd/${CF.index.cases.find((c) => c.state === state).file}`), n = d.vertices.length / 3, f = d.faces || CF.faces;
+      d.x = new Float32Array(n); d.y = new Float32Array(n); d.z = new Float32Array(n); d.c = new Float32Array(n);
+      for (let k = 0; k < n; k++) { d.x[k] = d.vertices[3 * k] / 1e3; d.y[k] = d.vertices[3 * k + 1] / 1e3; d.z[k] = d.vertices[3 * k + 2] / 1e3; d.c[k] = d.cp[k] / 100; }
+      d.tri = {};
+      for (const [g, [f0, nf]] of Object.entries(d.groups)) { const i = new Int32Array(nf), j = new Int32Array(nf), k = new Int32Array(nf);
+        for (let q = 0; q < nf; q++) { i[q] = f[3 * (f0 + q)]; j[q] = f[3 * (f0 + q) + 1]; k[q] = f[3 * (f0 + q) + 2]; } d.tri[g] = { i, j, k }; }
+      const lx = [], ly = [], lz = [], lc = [];
+      for (const L of d.lines) { for (let q = 0; q < L.s.length; q++) { lx.push(L.p[3 * q] / 1e3); ly.push(L.p[3 * q + 1] / 1e3); lz.push(L.p[3 * q + 2] / 1e3); lc.push(L.s[q] / 100); } lx.push(null); ly.push(null); lz.push(null); lc.push(0); }
+      d.lx = lx; d.ly = ly; d.lz = lz; d.lc = lc; delete d.vertices; delete d.cp;
+      CF.cache[state] = d;
+    }
+    return CF.cache[state];
+  };
+  /* Smoke positions at replay time tau [ms of flow time]: a few puffs per streamline, a fixed time apart. */
+  const smoke = () => {
+    const xs = [], ys = [], zs = [], gap = 120;
+    for (const L of data.lines) { const T = L.t[L.t.length - 1]; if (T < gap) continue;
+      for (let t = tau % gap; t < T; t += gap) { let q = 1; while (q < L.t.length - 1 && L.t[q] < t) q++;
+        const f = (t - L.t[q - 1]) / Math.max(1, L.t[q] - L.t[q - 1]), a = 3 * (q - 1), c = 3 * q;
+        xs.push((L.p[a] + f * (L.p[c] - L.p[a])) / 1e3); ys.push((L.p[a + 1] + f * (L.p[c + 1] - L.p[a + 1])) / 1e3); zs.push((L.p[a + 2] + f * (L.p[c + 2] - L.p[a + 2])) / 1e3); } }
+    return [xs, ys, zs];
+  };
+  const draw = () => {
+    const d = data, traces = [], ax = { visible: false, showgrid: false, zeroline: false, showbackground: false };
+    let first = true;
+    for (const g of Object.keys(d.groups)) { if (CF.hide.has(g)) continue;
+      traces.push({ type: "mesh3d", x: d.x, y: d.y, z: d.z, i: d.tri[g].i, j: d.tri[g].j, k: d.tri[g].k, intensity: d.c, cmin: -2.5, cmax: 1, colorscale: CF_CP, name: pretty(g), showscale: first, flatshading: false,
+        lighting: { ambient: 0.75, diffuse: 0.6, specular: 0.08, roughness: 0.9 }, hovertemplate: pretty(g) + "<br>Cp %{intensity:.2f}<extra></extra>",
+        colorbar: { title: { text: "pressure coefficient", side: "right", font: { size: 11 } }, thickness: 10, len: 0.6, x: 1 } }); first = false; }
+    traces.push({ type: "mesh3d", x: [-1.8, 4.0, 4.0, -1.8], y: [-1.2, -1.2, 1.2, 1.2], z: [0, 0, 0, 0], i: [0, 0], j: [1, 2], k: [2, 3], color: "#e9edf4", opacity: 0.55, hoverinfo: "skip", showscale: false, name: "ground" });
+    if (CF.lines) traces.push({ type: "scatter3d", mode: "lines", x: d.lx, y: d.ly, z: d.lz, line: { width: 1.6, color: d.lc, colorscale: SEQ, cmin: 0.2, cmax: 1.5 }, opacity: 0.38, hoverinfo: "skip", name: "streamlines", showlegend: false });
+    const [sx, sy, sz] = smoke(); smokeAt = traces.length;
+    traces.push({ type: "scatter3d", mode: "markers", x: sx, y: sy, z: sz, marker: { size: 1.9, color: NAVY, opacity: 0.7 }, hoverinfo: "skip", name: "smoke", showlegend: false });
+    Plotly.react(p, traces, { margin: { l: 0, r: 0, t: 0, b: 0 }, paper_bgcolor: "#fff", showlegend: false, uirevision: "cfd",
+      scene: { aspectmode: "data", xaxis: ax, yaxis: ax, zaxis: ax, camera: { eye: CF_VIEWS[CF.view][1], up: { x: 0, y: 0, z: 1 }, center: { x: 0.02, y: 0, z: -0.12 } }, dragmode: "orbit" } },
+      { responsive: true, displaylogo: false, displayModeBar: false, scrollZoom: true });
+  };
+  const show = () => {
+    const d = data, s = d.summary, base = (CF.cache.base || {}).summary, T = (name, key, unit, k = 1, dg = 0) => { const v = s[key]; if (!v || v[0] == null) return null;
+      const dl = base && d.state !== "base" && base[key] ? delta(v[0] * k, base[key][0] * k, dg, "") : ""; return tile(name, (v[0] * k).toFixed(dg), unit, dl || (v[1] != null ? `± ${(v[1] * k).toFixed(Math.max(dg, 1))} (95 % interval)` : "")); };
+    tiles.replaceChildren(...[T("Downforce", "downforce_N", "N"), T("Drag", "drag_N", "N"), T("Front share of downforce", "front_balance", "%", 100, 1), T("Downforce coefficient × area", "ClA_m2", "m²", 1, 3), T("Drag coefficient × area", "CdA_m2", "m²", 1, 3), T("Side force", "side_N", "N")].filter(Boolean));
+    info.textContent = `${d.label}. Air speed ${d.speed.toFixed(1)} m/s, ${d.resolution} grid (${d.cell_mm} mm cells near the car, ${(d.cells / 1e6).toFixed(1)} million cells). Pressure and streamlines are the time-averaged flow of that run.`;
+    tbl.replaceChildren(el("summary", { class: "muted", style: "cursor:pointer;margin:8px 0" }, "Loads by part of the car"), table(d.group_table));
+  };
+  const controls = () => {
+    const sel = el("select", { "aria-label": "CFD run", onchange: () => go(sel.value) }, CF.index.cases.map((c) => el("option", { value: c.state }, c.label))); sel.value = CF.state;
+    const play = el("button", { class: "btn navy small", onclick: () => { CF.play = !CF.play; play.textContent = CF.play ? "Pause the smoke" : "Play the smoke"; } }, CF.play ? "Pause the smoke" : "Play the smoke");
+    ctl.replaceChildren(sel, ...Object.entries(CF_VIEWS).map(([k, [name, eye]]) => el("button", { class: "btn small", onclick: () => { CF.view = k; Plotly.relayout(p, { "scene.camera": { eye, up: { x: 0, y: 0, z: 1 }, center: { x: 0.02, y: 0, z: -0.12 } } }); } }, name)), play);
+    ctl2.replaceChildren(el("span", { class: "lbl", style: "font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--ink-3);font-weight:700" }, "Show"),
+      ...Object.keys(data.groups).map((g) => el("button", { class: "chip" + (CF.hide.has(g) ? "" : " on"), onclick: (e) => { CF.hide.has(g) ? CF.hide.delete(g) : CF.hide.add(g); e.currentTarget.classList.toggle("on"); draw(); } }, pretty(g))),
+      el("button", { class: "chip" + (CF.lines ? " on" : ""), onclick: (e) => { CF.lines = !CF.lines; e.currentTarget.classList.toggle("on"); draw(); } }, "streamlines"));
+  };
+  const go = async (state) => {
+    try { setStatus("Loading the CFD run…", "busy"); data = await load(state); if (state !== "base" && !CF.cache.base) await load("base"); CF.state = state;
+      if (!holder.contains(p)) holder.replaceChildren(ctl, ctl2, tiles, p, info, tbl,
+        el("div", { class: "note warn" }, "This replays runs that were solved beforehand with the team's fsae_cfd solver; nothing is solved here, so the car and the conditions are the ones of each run. To add a run, solve it in the notebook and run web/export_cfd.py. Each run is one speed and attitude on a laptop-size grid: use the differences between runs before the absolute numbers."));
+      controls(); draw(); show(); setStatus("CFD run loaded.", "ok"); }
+    catch (e) { holder.replaceChildren(el("div", { class: "err" }, /missing|HTTP|empty/i.test(String(e.message)) ? "No CFD runs are in this build of the site. Solve them with fsae_cfd, then run python web/export_cfd.py and python web/build.py." : "The CFD run could not be shown: " + (e.message || e))); setStatus("Showing the baseline (pre-computed).", "ok"); }
+  };
+  const io = new IntersectionObserver((e) => { visible = e[0].isIntersecting; }); io.observe(holder);
+  timer = setInterval(() => {
+    if (!holder.isConnected) return clearInterval(timer);
+    if (!CF.play || !visible || document.hidden || !data || smokeAt < 0 || !p.data) return;
+    tau += 4;                                             // 4 ms of flow per frame: about a fifteenth of real speed
+    const [x, y, z] = smoke(); Plotly.restyle(p, { x: [x], y: [y], z: [z] }, [smokeAt]);
+  }, 70);
+  go(CF.state);
+}, { wide: true, first: true });
+{ const i = VISUALS.findIndex((v) => v.id === "cfd3d"), m = VISUALS.splice(i, 1)[0]; VISUALS.splice(VISUALS.findIndex((v) => v.id === "tunnel") + 1, 0, m); }

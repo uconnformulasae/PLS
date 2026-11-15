@@ -112,6 +112,8 @@ def script_copies():
         f = SITE / "data" / f"{name}.json"
         if f.exists():
             write(f.with_suffix(".js"), f"data/{name}.json", json.dumps(json.loads(f.read_text()), separators=(",", ":"), allow_nan=False))
+    for f in sorted((SITE / "data" / "cfd").glob("*.json")):        # 3-D CFD replay files (web/export_cfd.py)
+        write(f.with_suffix(".js"), f"data/cfd/{f.name}", f.read_text())
     z = SITE / "py" / "lapsim.zip"
     write(SITE / "py" / "lapsim.zip.js", "py/lapsim.zip", json.dumps(base64.b64encode(z.read_bytes()).decode()))
     w = SITE / "assets" / "worker.js"
