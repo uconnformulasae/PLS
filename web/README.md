@@ -13,7 +13,7 @@ LAPSIM_ROOT=/path/to/fsae_lapsim python web/build.py --serve      # build, then 
 |---|---|
 | `bridge/lapsim_web.py` | Calls `fsae_vd` / `fsae_pt` / `fsae_ev` and returns JSON: inputs, event results, every lap channel, subsystem data, sweeps. |
 | `build.py` | Zips the simulation packages, configs and track files into `site/py/lapsim.zip`, then runs both cars **from that zip** to write the baseline `site/data/*.json`. |
-| `site/` | The website: `index.html`, `assets/app.css`, `assets/app.js`, `assets/editors.js`, `assets/tunnel.js`, `assets/worker.js`. This folder is what gets published. |
+| `site/` | The website: `index.html`, `assets/app.css`, `assets/app.js`, `assets/editors.js`, `assets/tunnel.js`, `assets/wings.js`, `assets/workbench.js`, `assets/worker.js`. This folder is what gets published. |
 
 `site/index.html` also works opened by double-click (no server): `build.py` writes a script copy of every data file
 for that case. Running a simulation still needs the internet the first time, to download the Python runtime.
@@ -89,6 +89,27 @@ Colours are the variables at the top of `site/assets/app.css`. `--navy` (`#000E2
 Each of these writes an ordinary input override (`geom:frame`, `geom:hardpoints`, `geom:tracks`, or a config key),
 so Export / Import, sweeps and Run simulation all see it. With **Live preview** on, a change re-computes that page's
 subsystem data in the browser (`preview()` in the bridge, no lap); lap times change only with Run simulation.
+
+## Working on the whole car, and sharing it
+
+* **Full car simulation** lists every change made in any section ("Changes in this car") and sets the last run against
+  the baseline, event by event. Run simulation only ever changes what that visitor sees.
+* **Team** page: publishing is separate from running. A team member signs in with their own GitHub access token
+  (fine-grained, this repository, Contents: read and write) and publishes a **car design** (inputs, frame, hard points,
+  wings and its results), the **driver list**, or a **corner assembly**. Each publish is a commit made through the
+  GitHub API to `web/site/data/team/` on the branch the site is deployed from (`TEAM` in `assets/workbench.js` names the
+  repository and branch), so GitHub decides who may publish and the history shows who did. An adopted design is what
+  everybody opens on. Do not create `site/data/team/` by hand in this folder: it belongs to the published repository.
+* **Import & export**: `export_files()` in the bridge writes hard points (OptimumK format, an XYZ list, SolidWorks
+  equations), the frame's tubes and joints, and the changed inputs as YAML; the page adds results and wing sections.
+  Hard points and frame tubes come back in through `import_hardpoints()` / `import_frame()`.
+* **Optimization**: a logged run exported from RaceStudio as .csv goes through `fsae_vd`'s own cleaning pipeline and the
+  car is simulated on the logged course (`log_import()`); grip and coast-down fits are offered as inputs. Sensitivity,
+  the differential-evolution search with its robustness check, and the trackside-adjustment search are `fsae_vd.optimize`
+  and `fsae_vd.adjust`, run with the full powertrain model (`sensitivity()`, `optimise()`, `trackside()`).
+* **Wing designer** (`assets/wings.js`): every element to scale where it sits on the car; section, chord, angle,
+  position, slot and skin can be changed, and the endplates' size and material. It feeds the 2-D tunnel directly and
+  the lap simulation only through "Use this wing in the full car simulation".
 
 ## Adding a visual
 

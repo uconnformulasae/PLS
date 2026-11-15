@@ -124,6 +124,18 @@ def main():
            "elements": [], "endplates": {}, "zones": {}}
     for wing, names in ENDPLATES.items():
         out["endplates"][wing] = [round(float(np.mean([parts[n].mesh.vertices[:, 1].min(), parts[n].mesh.vertices[:, 1].max()])), 4) for n in names if n in parts]
+    out["endplate_boxes"] = {}                              # each plate's size from the CAD: length along the car, height, thickness, lowest edge
+    for wing, names in ENDPLATES.items():
+        rows = []
+        for n in names:
+            if n not in parts:
+                continue
+            v = parts[n].mesh.vertices
+            lo, hi = v.min(0), v.max(0)
+            area = 0.5 * sum(float(np.linalg.norm(np.cross(v[f[1]] - v[f[0]], v[f[2]] - v[f[0]]))) for f in parts[n].mesh.faces) / 2   # one face of the plate
+            rows.append({"name": n, "y": round(float(0.5 * (lo[1] + hi[1])), 4), "length": round(float(hi[0] - lo[0]), 4), "height": round(float(hi[2] - lo[2]), 4),
+                         "thickness": round(float(hi[1] - lo[1]), 4), "bottom": round(float(lo[2]), 4), "front": round(float(lo[0]), 4), "area": round(area, 4)})
+        out["endplate_boxes"][wing] = rows
     for name, wing, part in ELEMENTS:
         if part not in parts:
             print(f"  {name}: part {part} is not in the CAD")

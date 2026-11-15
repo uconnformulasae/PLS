@@ -259,3 +259,15 @@ table.edit th { white-space: nowrap; }
 .kpi .v { overflow-wrap: anywhere; }
 @media (max-width: 600px) { .quick { grid-template-columns: 1fr; } }
 .dform { grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); }
+
+/* ---------- team, import/export, wing designer */
+.btn.publish { background: #fff; color: var(--navy); border: 2px solid var(--navy); position: relative; padding-left: 30px; }
+.btn.publish::before { content: "⇪"; position: absolute; left: 10px; top: 50%; transform: translateY(-52%); font-size: 15px; }
+.btn.publish:hover { background: #eef3fc; }
+.btn.publish.small { padding-left: 26px; } .btn.publish.small::before { left: 8px; font-size: 13px; }
+.wform label { grid-template-columns: minmax(0, 1fr) 110px auto; } .wform label.widef { grid-template-columns: 170px minmax(0, 1fr); }
+.wform input[type=file] { font-size: 12.5px; max-width: 100%; }
+.seg.light button { border: 0; padding: 6px 12px; border-radius: 6px; font-weight: 600; font-size: 13px; cursor: pointer; background: transparent; }
+.headchips { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.ctl > label { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; max-width: 100%; min-width: 0; }
+.ctl select, .card select { max-width: 100%; }

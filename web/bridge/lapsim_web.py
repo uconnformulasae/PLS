@@ -857,7 +857,7 @@ def geometry(car="ic"):
         zones = wing_zones()
         for z in zones:
             z["result"] = wing_stack(z["elements"], 15.0, rho)
-        return {"zones": zones}
+        return {"zones": zones, "endplates": (wing_sections() or {}).get("endplate_boxes", {})}
     _safe(out, "wing_stacks", _stacks)
     out["air_density"] = _num(rho, 4)
     return out
@@ -1088,6 +1088,7 @@ def wing_elements():
     if cad:
         return [{"name": e["name"], "wing": e["wing"], "source": "cad", "section": "section cut from the CAD", "chord": e["chord"], "angle_deg": e["angle_deg"],
                  "thickness_pct": e["thickness_pct"], "camber_pct": e["camber_pct"], "y": e["y"], "span": e["span"], "unit": e["unit"],
+                 "inverted": e.get("inverted", True), "le": _j(np.array(e["poly"])[np.argmax(np.linalg.norm(np.array(e["poly"]) - np.array(e["poly"][0]), axis=1))], 6),
                  "described": True} for e in cad["elements"] if e["name"] in DESCRIBED]
     import yaml
     f = IC / "configs" / "ct17_cfd.yaml"
@@ -1202,11 +1203,19 @@ def _stack_polys(names, d_angle=None, dz=0.0):
     return out
 
 
-def wing_stack(names, speed=15.0, rho=1.12, d_angle=None, dz=0.0, ground=True):
+def wing_stack(names, speed=15.0, rho=1.12, d_angle=None, dz=0.0, ground=True, polys=None, chords=None):
     """Several wing elements solved together as they sit on the car, in ground effect: each element's pressure
     distribution and load per metre of span, and the stack's totals. 2-D and inviscid (see _panel_multi)."""
-    by = {e["name"]: e for e in wing_sections()["elements"]}
-    polys = _stack_polys(names, d_angle, dz)
+    by = {e["name"]: dict(e) for e in (wing_sections() or {"elements": []})["elements"]}
+    if polys is not None:                              # sections as the wing designer drew them (car axes, metres)
+        polys = [np.asarray(q, float) for q in polys]
+        for k, n in enumerate(names):
+            c = float(chords[k]) if chords else float(np.max(np.linalg.norm(polys[k] - polys[k][0], axis=1)))
+            te, le = polys[k][0], polys[k][np.argmax(np.linalg.norm(polys[k] - polys[k][0], axis=1))]
+            by[n] = {"chord": c, "angle_deg": float(np.degrees(np.arctan2(te[1] - le[1], te[0] - le[0])))}
+        d_angle = None
+    else:
+        polys = _stack_polys(names, d_angle, dz)
     if ground and min(float(p[:, 1].min()) for p in polys) <= 0.004:
         raise ValueError("the wing is on the ground: raise it")
     res = _panel_multi(polys, 0.0 if ground else None)
@@ -1294,3 +1303,313 @@ def tunnel_shapes():
     out["front_sections"] = fw.get("sections")
     out["rear_half_span"] = _num(float((y.get("rear_wing") or {}).get("span", 0.86)) / 2)
     return out
+
+
+# --------------------------------------------------------------------------- export: CAD and config files
+def _car_and_runner(car, overrides):
+    """(objs, vehicle, run(cfg, events) -> event results) for a car with the overrides applied."""
+    objs = _load(car, overrides)
+    cfg = objs["vehicle"]
+    if car == "ic":
+        import fsae_pt as pt
+        return objs, pt.PTVehicle(cfg, objs["pt"]), (lambda c, events: pt.run_events_pt(c, objs["pt"], events=tuple(events)))
+    import fsae_ev as ev
+    return objs, ev.EVVehicle(cfg, objs["ev"], objs["pack"]), (lambda c, events: ev.run_events_ev(c, objs["ev"], objs["pack"], events=tuple(events)))
+
+
+def export_files(car, overrides=None):
+    """Text files for the changed car: {file name: text}.
+
+    hardpoints_<axle>_optimumk.csv   the OptimumK export with the edited points (the format the model reads)
+    hardpoints_xyz.csv               every suspension point, both sides, in mm (name, side, x, y, z)
+    solidworks_equations.txt         the same points as SolidWorks global variables ("FL_UPRI_UppPnt_X"= 12.3mm)
+    frame_tubes.csv                  the frame's tubes in the frame CAD's axes (the tube-list format the model reads)
+    frame_joints.csv                 the frame's joints in car axes, mm
+    inputs_changed.yaml              the changed inputs, grouped by config file, ready to paste into the YAML files
+    """
+    from fsae_vd import hardpoints as hp
+    ov = dict(overrides or {})
+    objs = _load(car, ov)
+    cfg = objs["vehicle"]
+    out = {}
+    rows, eqs = ["point,description,side,x_mm,y_mm,z_mm"], ['\' Suspension hard points from the lap-simulation website. Export axes: x forward from the front axle, y to the left, z up.',
+                                                             '\' In SolidWorks: Tools > Equations > Import, or link this file. Left side shown positive in y.']
+    for which in ("front", "rear"):
+        f = getattr(cfg, which).hardpoint_file
+        if not f:
+            continue
+        out[f"hardpoints_{which}_optimumk.csv"] = Path(f).read_text(encoding="utf-8-sig", errors="replace")
+        d = hp.load_optimumk_csv(f)
+        tag = "F" if which == "front" else "R"
+        for name, p in d["points"].items():
+            x, y, z = (1e3 * float(v) for v in p)
+            for side, sy in (("L", 1.0), ("R", -1.0)):
+                rows.append(f"{which}_{name},{HP_NAMES.get(name, name)},{side},{x:.3f},{sy * y:.3f},{z:.3f}")
+                for ax, v in (("X", x), ("Y", sy * y), ("Z", z)):
+                    eqs.append(f'"{tag}{side}_{name}_{ax}"= {v:.3f}mm')
+    out["hardpoints_xyz.csv"] = "\n".join(rows) + "\n"
+    out["solidworks_equations.txt"] = "\n".join(eqs) + "\n"
+    try:
+        from fsae_frame import model
+        st = ov.get("geom:frame") or frame_geometry()
+        tubes, _ = _frame_build(st)
+        R = model.CAD_AXES                                   # car <- frame CAD; its transpose goes back
+        lines = ["# frame from the lap-simulation website, part axes (x across, y up, z forward; origin front axle centre on the ground), metres",
+                 "x0,y0,z0,x1,y1,z1,od,wall,shape,bend,member"]
+        for t in tubes:
+            a, b = R.T @ t.p0, R.T @ t.p1
+            lines.append(",".join(f"{v:.6f}" for v in (*a, *b, t.od, t.wall)) + f",{t.shape},{int(t.bend)},{t.member}")
+        out["frame_tubes.csv"] = "\n".join(lines) + "\n"
+        out["frame_joints.csv"] = "joint,x_mm,y_mm,z_mm\n" + "".join(f"{i + 1},{1e3 * p[0]:.2f},{1e3 * p[1]:.2f},{1e3 * p[2]:.2f}\n" for i, p in enumerate(st["nodes"]))
+    except Exception as e:  # noqa: BLE001
+        out["frame_tubes.csv"] = f"# frame export failed: {e}\n"
+    files = {"vehicle": "ct17_baseline.yaml" if car == "ic" else "ct17ev_vehicle.yaml", "pt": "ct17_powertrain.yaml",
+             "ev": "ct17ev_powertrain.yaml", "pack": "ev_accumulator.yaml"}
+    by = {}
+    for k, v in ov.items():
+        which, _, path = k.partition(":")
+        if which in files:
+            by.setdefault(files[which], []).append((path, v))
+    y = ["# Inputs changed on the lap-simulation website (values in SI unless a unit is written).",
+         "# Paste each value at its dotted path in the named config file."]
+    for f, items in by.items():
+        y.append(f"\n{f}:")
+        for path, v in sorted(items):
+            y.append(f"  {path}: {__import__('json').dumps(v)}")
+    for g in ("geom:hardpoints", "geom:frame", "geom:tracks", "geom:wings"):
+        if g in ov:
+            y.append(f"\n# {g.split(':')[1]}: edited on the site (see the exported geometry files)")
+    out["inputs_changed.yaml"] = "\n".join(y) + "\n"
+    return out
+
+
+# --------------------------------------------------------------------------- import: CAD
+def import_hardpoints(text):
+    """Suspension points from an OptimumK export, or from this site's hardpoints_xyz.csv -> {axle: {point: [x, y, z] m}}.
+    An OptimumK file holds one axle: it is reported under 'axle' = None and the page asks which one it is."""
+    import tempfile
+    from fsae_vd import hardpoints as hp
+    lines = [ln for ln in str(text).splitlines() if ln.strip()]
+    if lines and lines[0].lower().replace(" ", "").startswith("point,description,side"):
+        out = {"front": {}, "rear": {}}
+        for ln in lines[1:]:
+            c = ln.split(",")
+            if len(c) >= 6 and c[2].strip().upper() == "L":
+                which, _, name = c[0].partition("_")
+                if which in out:
+                    out[which][name] = [float(c[3]) / 1e3, float(c[4]) / 1e3, float(c[5]) / 1e3]
+        return {"format": "xyz", "points": {k: v for k, v in out.items() if v}}
+    f = Path(tempfile.gettempdir()) / "lapsim_import_hp.csv"
+    f.write_text(str(text))
+    d = hp.load_optimumk_csv(f)
+    if not d["points"]:
+        raise ValueError("no suspension points found: expected an OptimumK export (.csv) or this site's hardpoints_xyz.csv")
+    hp.Corner(d, True)                                   # raises if a point the solver needs is missing
+    xs = [p[0] for p in d["points"].values()]
+    return {"format": "optimumk", "title": d["name"], "axle_guess": "rear" if float(np.mean(xs)) < -0.6 else "front",
+            "points": {None: {k: _j(v, 7) for k, v in d["points"].items()}}}
+
+
+def import_frame(text):
+    """A frame tube list (x0,y0,z0,x1,y1,z1,od,wall,shape,bend,member in the frame CAD's axes, metres) -> an
+    editable frame state for the frame editor."""
+    import tempfile
+    from fsae_frame import model, tubes
+    f = Path(tempfile.gettempdir()) / "lapsim_import_frame.csv"
+    f.write_text(str(text))
+    tb = model.to_car(tubes.load_tubes(f))
+    if len(tb) < 3:
+        raise ValueError("fewer than three tubes found: expected the columns x0,y0,z0,x1,y1,z1,od,wall,shape,bend,member")
+    keep = dict(_FRAME)
+    try:
+        _FRAME.clear()
+        _FRAME["tubes"] = tb
+        st = __import__("copy").deepcopy(frame_geometry())
+    finally:
+        _FRAME.clear()
+        _FRAME.update(keep)
+    return st
+
+
+# --------------------------------------------------------------------------- import: logged runs, and the comparison
+def log_import(car, text, overrides=None):
+    """A logged run (RaceStudio / AiM .csv export, or a plain .csv with a time column) cleaned with the model's
+    own pipeline and set against the prediction: the car simulated on the course the log was driven on."""
+    import tempfile
+    import fsae_vd as vd
+    from fsae_vd import identification as idn
+    from fsae_vd import track as trk
+    f = Path(tempfile.gettempdir()) / "lapsim_import_log.csv"
+    f.write_text(str(text))
+    log = vd.load_log(str(f))
+    pl = vd.process_log(log)
+    d = pl.df
+    out = {"meta": {k: str(v) for k, v in (log.meta or {}).items() if k.lower() in ("session", "vehicle", "racer", "track", "date", "comment", "duration")},
+           "channels": sorted(log.channels), "duration_s": _num(float(d["t"].iloc[-1] - d["t"].iloc[0])),
+           "laps": [{"lap": i + 1, "start_s": _num(a), "time_s": _num(b - a, 6)} for i, (a, b) in enumerate(pl.laps or [])],
+           "rejected_laps": len(pl.rejected_laps or [])}
+    if "v" not in d:
+        raise ValueError("no speed channel could be built from this log (it needs GPS speed or wheel speeds)")
+    laps = pl.laps or [(float(d["t"].iloc[0]), float(d["t"].iloc[-1]))]
+    best = min(range(len(laps)), key=lambda i: laps[i][1] - laps[i][0])
+    a, b = laps[best]
+    L = d[(d["t"] >= a) & (d["t"] < b)]
+    idx = _pick(len(L), 1200)
+    s0 = float(L["s"].iloc[0]) if "s" in L else 0.0
+    meas = {"lap": best + 1, "time_s": _num(b - a, 6), "s": _j((L["s"].to_numpy() - s0)[idx]) if "s" in L else None,
+            "t": _j((L["t"].to_numpy() - a)[idx])}
+    for c in ("v", "ax", "ay", "x", "y", "throttle", "brake_f", "steer"):
+        if c in L:
+            meas[c] = _j(L[c].to_numpy(float)[idx], 4)
+    out["measured"] = meas
+    g = idn.gg_points(pl)
+    gi = _pick(len(g), 1500)
+    out["gg"] = {"ax": _j(g["ax"].to_numpy()[gi] / 9.80665, 3), "ay": _j(g["ay"].to_numpy()[gi] / 9.80665, 3)}
+    objs, veh, _ = _car_and_runner(car, overrides)
+    cfg = objs["vehicle"]
+    pred = {}
+    try:                                                   # the car on the logged course
+        tr = trk.from_processed_log(pl)
+        flying = float(L["v"].iloc[0]) > 3.0
+        tg = veh.traction_ggv()
+        if car == "ic":
+            import fsae_pt as pt
+            r = pt.solve_pt(tr, veh, tg, pt.PTTables(veh), v0=None if flying else 0.0, flying=flying)
+        else:
+            import fsae_ev as ev
+            r = ev.solve_ev(tr, veh, tg, veh.tables0, v0=None if flying else 0.0, flying=flying)
+        pi = _pick(len(r.s), 1200)
+        pred = {"time_s": _num(r.time, 6), "s": _j(np.asarray(r.s)[pi]), "v": _j(np.asarray(r.v)[pi], 4), "ax": _j(np.asarray(r.ax)[pi], 4),
+                "ay": _j(np.asarray(r.ay)[pi], 4), "x": _j(np.asarray(tr.x)[pi]) if tr.x is not None else None,
+                "y": _j(np.asarray(tr.y)[pi]) if tr.y is not None else None, "track_length_m": _num(tr.length), "start": "flying" if flying else "standing",
+                "limit": [str(v) for v in np.asarray(r.limit)[pi]]}
+        pred["delta_s"] = _num(r.time - (b - a), 4)
+        pred["delta_pct"] = _num(100 * (r.time - (b - a)) / (b - a), 3)
+    except Exception as e:  # noqa: BLE001
+        pred = {"error": f"the course could not be rebuilt from this log ({type(e).__name__}: {e}); it needs GPS position and at least one lap"}
+    out["predicted"] = pred
+    cal = {}
+    try:                                                   # grip: scale the tires so the model's lateral limit matches the log's
+        env = idn.lateral_envelope(pl)
+        if len(env) >= 2 and float(np.median(env["ay_env"])) < 0.6 * 9.80665:
+            cal["grip"] = {"skipped": "this run has no hard cornering (lateral acceleration stays under 0.6 g), so it says nothing about grip"}
+        elif len(env) >= 2:
+            veh.pt.unlimited = True
+            try:
+                model = np.asarray(veh.ay_max(env["v"].to_numpy()), float)
+            finally:
+                veh.pt.unlimited = False
+            w = np.sqrt(env["n"].to_numpy())
+            ratio = float(np.sum(w * env["ay_env"].to_numpy() / model) / np.sum(w))
+            cal["grip"] = {"v": _j(env["v"].to_numpy()), "measured_g": _j(env["ay_env"].to_numpy() / 9.80665, 4), "model_g": _j(model / 9.80665, 4),
+                           "ratio": _num(ratio, 4), "lambda_mu_now": _num(cfg.tires.lambda_mu), "lambda_mu_suggested": _num(cfg.tires.lambda_mu * ratio, 4),
+                           "samples": int(env["n"].sum())}
+    except Exception as e:  # noqa: BLE001
+        cal["grip"] = {"error": f"{type(e).__name__}: {e}"}
+    try:                                                   # drag and rolling resistance from coasting
+        mask = idn.coastdown_mask(pl)
+        if int(mask.sum()) >= 150:
+            c = cfg.copy()
+            if c.aero.rho is None:
+                c.aero.rho = float(c.aero.density())
+            fit = idn.fit_coastdown(pl, c, mask)
+            cal["coastdown"] = {k: _num(v, 4) for k, v in fit.items()}
+    except Exception as e:  # noqa: BLE001
+        cal["coastdown"] = {"error": f"{type(e).__name__}: {e}"}
+    out["calibration"] = cal
+    qc = vd.qc_table(pl)
+    out["qc"] = _table(qc.head(40), index=True) if qc is not None and len(qc) else None
+    return out
+
+
+# --------------------------------------------------------------------------- optimisation (fsae_vd.optimize / adjust)
+def _progress(text):
+    """Tell the page what a long job is doing (in the browser's worker; a no-op elsewhere)."""
+    try:
+        import json as _json
+        import js
+        js.postMessage(js.JSON.parse(_json.dumps({"status": text})))
+    except Exception:  # noqa: BLE001
+        pass
+
+
+class _full_car_events:
+    """Make fsae_vd.optimize / adjust score cars with the full powertrain model (fsae_pt or fsae_ev) instead of the
+    vehicle-dynamics-only runner they import, so their sensitivity, optimiser and trackside tools work on this car."""
+
+    def __init__(self, runner, label=None):
+        self.runner, self.label, self.n = runner, label, 0
+
+    def __enter__(self):
+        from fsae_vd import adjust, optimize
+        self.mods, self.old = (optimize, adjust), (optimize.run_events, adjust.run_events)
+
+        def run_events(cfg, tracks=None, ggv=None, events=EVENTS, **kw):
+            self.n += 1
+            if self.label and self.n % 4 == 0:
+                _progress(f"{self.label}: {self.n} simulations so far…")
+            return self.runner(cfg, events)
+        for m in self.mods:
+            m.run_events = run_events
+        return self
+
+    def __exit__(self, *a):
+        for m, old in zip(self.mods, self.old):
+            m.run_events = old
+
+
+def _params(cfg, keys, span=0.2):
+    from fsae_vd.optimize import Param
+    out = []
+    for k in keys:
+        path = k.split(":", 1)[1] if ":" in k else k
+        v = cfg.get(path)
+        if not isinstance(v, (int, float)) or isinstance(v, bool):
+            raise ValueError(f"{path} is not a number in the car config, so it cannot be varied")
+        lo, hi = sorted((v * (1 - span), v * (1 + span))) if v else (-span, span)
+        out.append(Param(path, bounds=(lo, hi), label=path))
+    return out
+
+
+def sensitivity(car, keys, overrides=None, events=("acceleration", "skidpad", "autocross")):
+    """fsae_vd.optimize.sensitivity on the full car: what a +/-5 % step in each input does to every event and to the
+    score. Vehicle inputs only ('vehicle:<path>')."""
+    from fsae_vd import optimize
+    objs, veh, runner = _car_and_runner(car, overrides)
+    cfg = objs["vehicle"]
+    P = _params(cfg, keys)
+    with _full_car_events(runner, "Sensitivity") as fc:
+        base, tab = optimize.sensitivity(cfg, P, events=tuple(events))
+    return {"base": {"score": _num(base["score"]), "score_kind": base["score_kind"], "times": _j(base["times"])},
+            "table": _table(tab, index=False), "simulations": fc.n, "events": list(events)}
+
+
+def optimise(car, keys, overrides=None, events=("acceleration", "skidpad", "autocross"), span=0.15, maxiter=4, popsize=4, robust=True):
+    """fsae_vd.optimize.optimise (differential evolution) + robustness + recommend on the full car."""
+    from fsae_vd import optimize
+    objs, veh, runner = _car_and_runner(car, overrides)
+    cfg = objs["vehicle"]
+    P = _params(cfg, keys, float(span))
+    with _full_car_events(runner, "Optimising") as fc:
+        opt = optimize.optimise(cfg, P, events=tuple(events), maxiter=int(maxiter), popsize=int(popsize))
+        rob = optimize.robustness(cfg, opt["best_cfg"], events=tuple(events)) if robust else None
+        table, ev, verdict = optimize.recommend(opt, P, rob)
+    hist = [h[1] - h[2] for h in opt["history"]]
+    best_so_far = list(np.maximum.accumulate(hist)) if hist else []
+    return {"parameters": _table(table, index=False), "events": _table(ev.rename_axis("event")), "verdict": [str(v) for v in verdict],
+            "robustness": _table(rob, index=False) if rob is not None else None,
+            "best": {f"vehicle:{p.path}": _num(float(x), 6) for p, x in zip(P, opt["x"])},
+            "score": {"base": _num(opt["base"]["score"]), "best": _num(opt["best"]["score"]), "kind": opt["base"]["score_kind"]},
+            "history": _j(np.array(best_so_far), 5), "simulations": fc.n, "reverted": list(opt.get("reverted_no_effect", []))}
+
+
+def trackside(car, overrides=None, events=("acceleration", "skidpad", "autocross")):
+    """fsae_vd.adjust.optimise_all_events on the full car: the best reachable setting of the adjustments the car
+    has (springs, anti-roll bar blades, camber shims ...) for each event."""
+    from fsae_vd import adjust
+    objs, veh, runner = _car_and_runner(car, overrides)
+    cfg = objs["vehicle"]
+    with _full_car_events(runner, "Trackside adjustment") as fc:
+        r = adjust.optimise_all_events(cfg, events=tuple(events), max_exhaustive=80, restarts=1)
+    return {"summary": _table(r["summary"]), "settings": _table(r["settings_by_event"]) if len(r["settings_by_event"]) else None,
+            "not_optimised": _table(r["not_optimised"], index=False), "features": [f.name for f in r["features"]], "simulations": fc.n}

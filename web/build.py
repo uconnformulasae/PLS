@@ -125,7 +125,7 @@ def stamp_assets():
     old cached copy of one file against a new copy of another."""
     import hashlib
     import re
-    names = ("app.css", "app.js", "editors.js", "tunnel.js")
+    names = ("app.css", "app.js", "editors.js", "tunnel.js", "wings.js", "workbench.js")
     h = hashlib.sha1(b"".join((SITE / "assets" / n).read_bytes() for n in names)).hexdigest()[:10]
     f = SITE / "index.html"
     f.write_text(re.sub(r'(assets/(?:%s))(\?v=\w+)?"' % "|".join(re.escape(n) for n in names), r'\1?v=%s"' % h, f.read_text()))

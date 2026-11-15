@@ -93,9 +93,13 @@ function tunnelShapes(view) {
     const a = (k ? deg : 0) * Math.PI / 180, o = les[1] || les[0], c = Math.cos(a), s = Math.sin(a);       // flaps turn together about the first flap's leading edge
     return p.map(([x, z]) => [o[0] + (x - o[0]) * c - (z - o[1]) * s, o[1] + (x - o[0]) * s + (z - o[1]) * c + dz]);
   });
+  // the wings as the wing designer has them (the CAD when nothing was changed there)
+  const designed = (wing) => (typeof wdWingEls === "function" && wdBaseEls().length && wdBaseEls()[0].le ? wdWingEls(wing) : null);
+  const fw = designed("front_wing"), rw = designed("rear_wing");
+  const front = fw ? [fw.map((e) => e.poly), fw.map((e) => e.le)] : [T.elements.front_wing, T.le.front_wing], rear = rw ? [rw.map((e) => e.poly), rw.map((e) => e.le)] : [T.elements.rear_wing, T.le.rear_wing];
   for (const part of TUNNEL_VIEWS[view].parts) {
-    if (part.startsWith("front")) flaps(T.elements.front_wing.slice(0, +part.slice(5)), T.le.front_wing, TV.dFront, TV.ride / 1e3).forEach((p) => out.push({ id: 1, poly: p }));
-    else if (part === "rear") flaps(T.elements.rear_wing, T.le.rear_wing, TV.dRear, 0).forEach((p) => out.push({ id: 2, poly: p }));
+    if (part.startsWith("front")) flaps(front[0].slice(0, +part.slice(5)), front[1], TV.dFront, TV.ride / 1e3).forEach((p) => out.push({ id: 1, poly: p }));
+    else if (part === "rear") flaps(rear[0], rear[1], TV.dRear, 0).forEach((p) => out.push({ id: 2, poly: p }));
     else if (part === "body" && T.body) out.push({ id: 3, poly: T.body });
     else if (part === "helmet" && T.helmet) out.push({ id: 4, circle: T.helmet });
     else if (part === "wheels") { const r = T.wheels.radius; out.push({ id: 5, circle: [0, r, r] }, { id: 6, circle: [T.wheels.wheelbase, r, r] }); }
@@ -216,7 +220,7 @@ V("aero", "tunnel", "Virtual wind tunnel (2-D)", "Air flowing over a side-view s
     el("label", { class: "check" }, el("input", { type: "checkbox", checked: TV.smoke, onchange: (e) => { TV.smoke = e.target.checked; } }), "Smoke"), run,
     el("button", { class: "btn small", onclick: () => build() }, "Restart the flow"));
   const ctl2 = el("div", { class: "ctl" }, slider("Front flaps", "dFront", -12, 12, 1, "deg", true), slider("Rear flaps", "dRear", -12, 12, 1, "deg", true), slider("Front wing height", "ride", -40, 60, 5, "mm", true), slider("Car speed", "speed", 5, 35, 1, "m/s", false));
-  build();
+  build(); ctx.rebuild = build;                             // the wing designer calls this when a wing changes
   b.append(ctl, ctl2, wrap, legend, info, tiles, el("div", { class: "note warn" }, "Use this for flow patterns and for which way a change moves the loads, not for the car's forces. It is a two-dimensional slice (no wing tips, endplates or flow around the sides) at a Reynolds number hundreds of times below the car's, so separation and the size of the forces differ from the real car. The ground moves with the air, as on track; the tires are not spinning. Loads are per metre of width and settle after a few seconds."));
   raf = requestAnimationFrame(frame);
 }, { wide: true, first: true });
@@ -290,10 +294,11 @@ V("aero", "cfd3d", "3-D flow replay", "The saved 3-D CFD runs of the whole car: 
       el("button", { class: "chip" + (CF.lines ? " on" : ""), onclick: (e) => { CF.lines = !CF.lines; e.currentTarget.classList.toggle("on"); draw(); } }, "streamlines"));
   };
   const go = async (state) => {
+    const before = [$("#status").textContent, $("#dot").className.replace("dot", "").trim()];        // loading this card should not replace what the status bar was saying
     try { setStatus("Loading the CFD run…", "busy"); data = await load(state); if (state !== "base" && !CF.cache.base) await load("base"); CF.state = state;
       if (!holder.contains(p)) holder.replaceChildren(ctl, ctl2, tiles, p, info, tbl,
         el("div", { class: "note warn" }, "These runs were solved with the wing CAD as it is, which includes a fourth front flap (F4) that is not on the car: re-solve them without it for the car as built. This replays runs that were solved beforehand with the team's fsae_cfd solver; nothing is solved here, so the car and the conditions are the ones of each run. To add a run, solve it in the notebook and run web/export_cfd.py. Each run is one speed and attitude on a laptop-size grid: use the differences between runs before the absolute numbers."));
-      controls(); draw(); show(); setStatus("CFD run loaded.", "ok"); }
+      controls(); draw(); show(); setStatus(before[0], before[1] === "busy" ? "ok" : before[1]); }
     catch (e) { holder.replaceChildren(el("div", { class: "err" }, /missing|HTTP|empty/i.test(String(e.message)) ? "No CFD runs are in this build of the site. Solve them with fsae_cfd, then run python web/export_cfd.py and python web/build.py." : "The CFD run could not be shown: " + (e.message || e))); setStatus("Showing the baseline (pre-computed).", "ok"); }
   };
   const io = new IntersectionObserver((e) => { visible = e[0].isIntersecting; }); io.observe(holder);

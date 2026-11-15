@@ -20,6 +20,8 @@ const NAVY = "#000E2F";
 const SEQ = [[0, "#d6e4f7"], [0.5, "#5b93dc"], [1, "#0B2152"]];           // one hue, light -> dark
 const EVENT_NAMES = { acceleration: "Acceleration", skidpad: "Skidpad", autocross: "Autocross", endurance: "Endurance", efficiency: "Efficiency" };
 const $ = (s, el = document) => el.querySelector(s);
+/* replaceChildren / append write the word "null" for an empty slot: drop empty slots instead, everywhere. */
+for (const m of ["replaceChildren", "append", "prepend"]) { const f = Element.prototype[m]; Element.prototype[m] = function (...kids) { return f.apply(this, kids.filter((k) => k != null && k !== false)); }; }
 const el = (tag, attrs = {}, ...kids) => {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -525,8 +527,11 @@ function about() {
     ["brakes", "Balance, rotor temperatures, pad friction and the corner hardware."],
     ["chassis", "Move, add or remove frame joints, change tube sizes and materials, and see mass and stiffness."],
     ["studies", "Sweep any input and see what it does to each event."],
+    ["optimise", "Set the prediction against the built car's logged runs, find what matters, and search for a better set-up."],
+    ["data", "Export hard points, the frame and inputs for CAD and the config files; import geometry and test results."],
+    ["team", "Publish car designs, drivers and corner assemblies so the whole team sees them."],
     ["inputs", "Every input of the model in one searchable list."]];
-  const cards = GUIDE.map(([id, text]) => { const p = PAGES.find((x) => x.id === id);
+  const cards = GUIDE.filter(([id]) => PAGES.some((x) => x.id === id)).map(([id, text]) => { const p = PAGES.find((x) => x.id === id);
     return el("button", { class: "guide", onclick: () => go(id) }, el("b", {}, val(p.label)), el("span", {}, text)); });
   // The wording of this page is Haley's (edited in the GitHub clone): keep it when changing the layout.
   return [el("div", { class: "card wide prose", html: `
@@ -562,7 +567,7 @@ function render() {
   if (!S.data[car]) { main.replaceChildren(el("div", { class: "muted" }, "Loading…")); return; }
   const head = el("div", { class: "page-head" }, el("div", {}, el("h1", {}, val(page.label)), page.intro ? el("p", {}, val(page.intro)) : null));
   if (page.id === "about") return main.replaceChildren(head, el("div", { class: "grid" }, about()));
-  if (page.id !== "drivers" && typeof driverBanner === "function") head.append(driverBanner());
+  if (page.id !== "drivers" && typeof driverBanner === "function") { const chips = el("div", { class: "headchips" }, driverBanner()); if (typeof teamBanner === "function") { const t = teamBanner(); if (t) chips.prepend(t); } head.append(chips); }
   if (page.id === "inputs") return main.replaceChildren(head, inputsPanel(null, true));
   const vis = VISUALS.filter((v) => v.page === page.id && (!v.car || v.car === car)).sort((a, b) => (b.first ? 1 : 0) - (a.first ? 1 : 0));   // interactive figures lead the page
   const isOn = (v) => (v.id in S.hidden ? !S.hidden[v.id] : !v.off);
@@ -697,6 +702,7 @@ async function setCar(car) {
 <p>${String(e.message || e)}</p><p>From the <code>fsae_lapsim</code> folder run <code>python web/build.py --serve</code> and open <code>http://localhost:8000</code>.</p>` }));
     return;
   }
+  if (typeof teamOnCar === "function") await teamOnCar(car);                    // the team's drivers and adopted car
   if (typeof DR !== "undefined" && DR.chosen().id !== "design") DR.apply();      // the driver picked last time is still in the car
   render(); pending();
 }
