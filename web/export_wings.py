@@ -4,7 +4,7 @@
     python web/export_wings.py        # writes web/bridge/wing_sections.json, then run  python web/build.py
 
 Run it natively (it needs fsae_cfd, so numba, and the STL files in IC/Aerodynamic Elements). For every wing element
-(F1 ... F4, R1 ... R4) it slices the part's surface with a vertical plane at a span station and keeps:
+(F1 ... F3, R1 ... R4) it slices the part's surface with a vertical plane at a span station and keeps:
 
     poly      the section as it sits on the car [m]: x rearward from the front axle, z up from the ground,
               from the trailing edge round the leading edge and back (cosine-spaced)
@@ -28,8 +28,10 @@ sys.path.insert(0, str(IC))
 warnings.filterwarnings("ignore")
 
 # element name on the car -> part name in the CFD geometry (front parts are the right half, mirrored)
+# The front wing on the car has three elements (team, 2026-11-15). The CAD assembly also holds a fourth flap,
+# 611-11-17IC F4 (CFD part front_wing_el3), which is NOT on the car: it is left out here.
 ELEMENTS = [("F1", "front_wing", "front_wing_el0_r"), ("F2", "front_wing", "front_wing_el1_r"), ("F3", "front_wing", "front_wing_el2_r"),
-            ("F4", "front_wing", "front_wing_el3_r"), ("R1", "rear_wing", "rear_wing_el0"), ("R2", "rear_wing", "rear_wing_el1"),
+            ("R1", "rear_wing", "rear_wing_el0"), ("R2", "rear_wing", "rear_wing_el1"),
             ("R3", "rear_wing", "rear_wing_el2"), ("R4", "rear_wing", "rear_wing_el3")]
 ENDPLATES = {"front_wing": ["fw_fence_in_r", "fw_fence_mid_r", "fw_endplate_r"], "rear_wing": ["rw_endplate_r"]}
 

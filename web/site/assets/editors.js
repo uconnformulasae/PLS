@@ -712,7 +712,7 @@ V("aero", "airfoil", "Wing elements, one at a time", "F1 to F3 and R1 to R4, eac
   const rho = GEO().air_density || 1.12;
   const state = AF.custom || (AF.custom = els.map((e) => ({ section: e.source === "cad" ? "" : e.section, chord: e.chord, angle: e.angle_deg, speed: 15, coords: "", result: e.result })));
   const out = el("div"), ctl = el("div", { class: "ctl" }), tabl = el("div");
-  const name = (e) => `${e.name} · ${e.wing === "front_wing" ? "front wing" : "rear wing"}${e.described === false ? " (in the CAD only)" : ""}`;
+  const name = (e) => `${e.name} · ${e.wing === "front_wing" ? "front wing" : "rear wing"}`;
   const what = (k) => (state[k].coords ? "pasted coordinates" : state[k].section ? state[k].section : els[k].source === "cad" ? "cut from the CAD" : els[k].section);
   const show = () => {
     const c = state[AF.i], r = c.result, shape = plotDiv("short"), cp = plotDiv("short"), curve = plotDiv("short");
@@ -862,15 +862,15 @@ V("drivers", "driver_view", "Seating and sight line", "Drag the seat reference p
 
 
 // ------------------------------------------------------------------ wing stacks: the elements working together
-const WS = { zone: 1, speed: 15, f4: false, dAngle: {}, dz: 0, ground: true, cache: {} };
+const WS = { zone: 1, speed: 15, dAngle: {}, dz: 0, ground: true, cache: {} };
 V("aero", "wingstack", "Wing stacks: the elements working together", "The elements of one stretch of span solved together as they sit on the car, in ground effect. Front wing: F1 + F2 + F3 inboard of the middle endplate, F1 + F2 outboard, F1 alone beside the nose.", (b) => {
   const W = need(GEO().wing_stacks); if (W.error) throw new Error(W.error);
   const rho = GEO().air_density || 1.12, out = el("div"), ctl = el("div", { class: "ctl" }), ctl2 = el("div", { class: "ctl" }), est = el("div");
-  const zones = () => (WS.f4 ? W.zones_with_f4.map((z, k) => Object.assign({}, z, { result: JSON.stringify(z.elements) === JSON.stringify(W.zones[k].elements) ? W.zones[k].result : WS.cache["f4" + k] })) : W.zones);
+  const zones = () => W.zones;
   const zname = (z) => `${z.wing === "front_wing" ? "Front wing" : "Rear wing"}, ${(z.y[0] * 1e3).toFixed(0)} to ${(z.y[1] * 1e3).toFixed(0)} mm from the centre line: ${z.elements.join(" + ")}`;
   const edited = () => WS.speed !== 15 || WS.dz !== 0 || !WS.ground || Object.values(WS.dAngle).some((v) => v);
-  const key = (k) => JSON.stringify([k, WS.f4, WS.speed, WS.dz, WS.ground, WS.dAngle]);
-  const result = (k) => (edited() || WS.f4 ? WS.cache[key(k)] : null) || (!edited() ? zones()[k].result : null);
+  const key = (k) => JSON.stringify([k, WS.speed, WS.dz, WS.ground, WS.dAngle]);
+  const result = (k) => (edited() ? WS.cache[key(k)] : zones()[k].result);
   const solve = async (k) => {
     const z = zones()[k];
     if (result(k)) return result(k);
@@ -906,12 +906,11 @@ V("aero", "wingstack", "Wing stacks: the elements working together", "The elemen
     const zs = zones(), sel = el("select", { "aria-label": "Span zone", onchange: () => { WS.zone = +sel.value; controls(); show(); } }, zs.map((z, k) => el("option", { value: k }, zname(z)))); sel.value = WS.zone;
     ctl.replaceChildren(sel, el("label", {}, "speed [m/s] ", numIn(WS.speed, (v) => { WS.speed = v; show(); }, { min: 1, max: 60, style: "width:76px" })),
       el("label", {}, "front wing height [mm] ", numIn(WS.dz, (v) => { WS.dz = v; show(); }, { min: -60, max: 150, style: "width:76px" })),
-      el("label", { class: "check" }, el("input", { type: "checkbox", checked: WS.ground, onchange: (e) => { WS.ground = e.target.checked; show(); } }), "Ground"),
-      el("label", { class: "check", title: "The wing CAD holds a fourth front flap, 611-11-17IC F4, between the same endplates as F3" }, el("input", { type: "checkbox", checked: WS.f4, onchange: (e) => { WS.f4 = e.target.checked; controls(); show(); } }), "Include the CAD's F4"));
+      el("label", { class: "check" }, el("input", { type: "checkbox", checked: WS.ground, onchange: (e) => { WS.ground = e.target.checked; show(); } }), "Ground"));
     ctl2.replaceChildren(el("span", { class: "muted" }, "Turn an element about its leading edge [deg, + = more wing]:"), ...zs[WS.zone].elements.map((n) => el("label", {}, n + " ", numIn(WS.dAngle[n] || 0, (v) => { WS.dAngle = Object.assign({}, WS.dAngle, { [n]: v }); show(); }, { min: -20, max: 20, step: 0.5, style: "width:70px" }))),
       el("button", { class: "btn small", onclick: () => { WS.dAngle = {}; WS.dz = 0; WS.speed = 15; WS.ground = true; controls(); show(); } }, "Reset"));
   };
   controls(); show();
-  b.append(ctl, ctl2, out, est, el("div", { class: "note warn" }, "Use this for how the load is shared between elements, where the suction peaks are, and which way a change of angle, gap or height moves things. The size of the loads is an upper bound: the method has no viscosity, so nothing stalls and the slots work perfectly, and it is two-dimensional, so there are no tip or endplate losses. The table shows how far above the 3-D CFD run that puts it. Shapes, chords, angles, gaps and heights are cut from the wing CAD."));
+  b.append(ctl, ctl2, out, est, el("div", { class: "note warn" }, "Use this for how the load is shared between elements, where the suction peaks are, and which way a change of angle, gap or height moves things. The size of the loads is an upper bound: the method has no viscosity, so nothing stalls and the slots work perfectly, and it is two-dimensional, so there are no tip or endplate losses. The table shows how far above the 3-D CFD run that puts it; that run's front wing still carries the CAD's fourth flap (F4), which is not on the car. Shapes, chords, angles, gaps and heights are cut from the wing CAD."));
 }, { wide: true });
 { const i = VISUALS.findIndex((v) => v.id === "wingstack"), m = VISUALS.splice(i, 1)[0]; VISUALS.splice(VISUALS.findIndex((v) => v.id === "airfoil") + 1, 0, m); }

@@ -94,7 +94,7 @@ function tunnelShapes(view) {
     return p.map(([x, z]) => [o[0] + (x - o[0]) * c - (z - o[1]) * s, o[1] + (x - o[0]) * s + (z - o[1]) * c + dz]);
   });
   for (const part of TUNNEL_VIEWS[view].parts) {
-    if (part.startsWith("front")) flaps(T.elements.front_wing.slice(0, +part.slice(5) + (TV.f4 && part === "front3" ? 1 : 0)), T.le.front_wing, TV.dFront, TV.ride / 1e3).forEach((p) => out.push({ id: 1, poly: p }));
+    if (part.startsWith("front")) flaps(T.elements.front_wing.slice(0, +part.slice(5)), T.le.front_wing, TV.dFront, TV.ride / 1e3).forEach((p) => out.push({ id: 1, poly: p }));
     else if (part === "rear") flaps(T.elements.rear_wing, T.le.rear_wing, TV.dRear, 0).forEach((p) => out.push({ id: 2, poly: p }));
     else if (part === "body" && T.body) out.push({ id: 3, poly: T.body });
     else if (part === "helmet" && T.helmet) out.push({ id: 4, circle: T.helmet });
@@ -214,7 +214,6 @@ V("aero", "tunnel", "Virtual wind tunnel (2-D)", "Air flowing over a side-view s
   const ctl = el("div", { class: "ctl" }, sel("Slice", TV.view, Object.entries(TUNNEL_VIEWS).map(([k, v]) => [k, v.name]), (v) => { TV.view = v; build(); }),
     sel("Colour", TV.mode, [["speed", "Colour: air speed"], ["pressure", "Colour: pressure"], ["spin", "Colour: spin (vortices)"]], (v) => { TV.mode = v; showLegend(); tunnelDraw(t, fctx, img); }),
     el("label", { class: "check" }, el("input", { type: "checkbox", checked: TV.smoke, onchange: (e) => { TV.smoke = e.target.checked; } }), "Smoke"), run,
-    el("label", { class: "check", title: "The wing CAD holds a fourth front flap, 611-11-17IC F4, beside F3" }, el("input", { type: "checkbox", checked: !!TV.f4, onchange: (e) => { TV.f4 = e.target.checked; build(); } }), "CAD's F4"),
     el("button", { class: "btn small", onclick: () => build() }, "Restart the flow"));
   const ctl2 = el("div", { class: "ctl" }, slider("Front flaps", "dFront", -12, 12, 1, "deg", true), slider("Rear flaps", "dRear", -12, 12, 1, "deg", true), slider("Front wing height", "ride", -40, 60, 5, "mm", true), slider("Car speed", "speed", 5, 35, 1, "m/s", false));
   build();
@@ -293,7 +292,7 @@ V("aero", "cfd3d", "3-D flow replay", "The saved 3-D CFD runs of the whole car: 
   const go = async (state) => {
     try { setStatus("Loading the CFD run…", "busy"); data = await load(state); if (state !== "base" && !CF.cache.base) await load("base"); CF.state = state;
       if (!holder.contains(p)) holder.replaceChildren(ctl, ctl2, tiles, p, info, tbl,
-        el("div", { class: "note warn" }, "This replays runs that were solved beforehand with the team's fsae_cfd solver; nothing is solved here, so the car and the conditions are the ones of each run. To add a run, solve it in the notebook and run web/export_cfd.py. Each run is one speed and attitude on a laptop-size grid: use the differences between runs before the absolute numbers."));
+        el("div", { class: "note warn" }, "These runs were solved with the wing CAD as it is, which includes a fourth front flap (F4) that is not on the car: re-solve them without it for the car as built. This replays runs that were solved beforehand with the team's fsae_cfd solver; nothing is solved here, so the car and the conditions are the ones of each run. To add a run, solve it in the notebook and run web/export_cfd.py. Each run is one speed and attitude on a laptop-size grid: use the differences between runs before the absolute numbers."));
       controls(); draw(); show(); setStatus("CFD run loaded.", "ok"); }
     catch (e) { holder.replaceChildren(el("div", { class: "err" }, /missing|HTTP|empty/i.test(String(e.message)) ? "No CFD runs are in this build of the site. Solve them with fsae_cfd, then run python web/export_cfd.py and python web/build.py." : "The CFD run could not be shown: " + (e.message || e))); setStatus("Showing the baseline (pre-computed).", "ok"); }
   };

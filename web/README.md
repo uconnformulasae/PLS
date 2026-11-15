@@ -82,7 +82,7 @@ Colours are the variables at the top of `site/assets/app.css`. `--navy` (`#000E2
   page. `python web/export_cfd.py` turns the runs in `IC/results/cfd/runs/` into `site/data/cfd/*.json`; run it natively
   (it needs numba and the wing STL files) before `build.py`. These files hold the car's surface mesh.
 
-* **Real wing sections**: `python web/export_wings.py` cuts F1 to F4 and R1 to R4 out of the wing CAD (shape, chord,
+* **Real wing sections**: `python web/export_wings.py` cuts F1 to F3 and R1 to R4 out of the wing CAD (the CAD's fourth front flap, F4, is not on the car and is left out) (shape, chord,
   angle, where along the span each one runs) into `bridge/wing_sections.json`. The single-element card, the tunnel and
   the **wing stacks** card (elements solved together in ground effect, `wing_stack()` in the bridge) all use it.
 

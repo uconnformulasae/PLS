@@ -857,7 +857,7 @@ def geometry(car="ic"):
         zones = wing_zones()
         for z in zones:
             z["result"] = wing_stack(z["elements"], 15.0, rho)
-        return {"zones": zones, "zones_with_f4": wing_zones(True)}
+        return {"zones": zones}
     _safe(out, "wing_stacks", _stacks)
     out["air_density"] = _num(rho, 4)
     return out
@@ -1068,9 +1068,8 @@ def airfoil(section="naca4412", chord=0.35, angle_deg=5.0, speed=15.0, rho=1.12,
 
 
 _WINGS = {}
-# The team's description of the front wing: F1 and F2 run the full width of the stack, F3 only inboard of the middle
-# endplate. The CAD assembly also holds a fourth flap (611-11-17IC F4) beside F3: it is listed, and left out of the
-# stacks unless asked for.
+# The wings on the car (team, 2026-11-15): front F1 + F2 + F3 inboard of the middle endplate and F1 + F2 outboard of
+# it; rear R1 to R4. The CAD assembly's fourth front flap (611-11-17IC F4) is not on the car and is never used here.
 DESCRIBED = ("F1", "F2", "F3", "R1", "R2", "R3", "R4")
 
 
@@ -1089,7 +1088,7 @@ def wing_elements():
     if cad:
         return [{"name": e["name"], "wing": e["wing"], "source": "cad", "section": "section cut from the CAD", "chord": e["chord"], "angle_deg": e["angle_deg"],
                  "thickness_pct": e["thickness_pct"], "camber_pct": e["camber_pct"], "y": e["y"], "span": e["span"], "unit": e["unit"],
-                 "described": e["name"] in DESCRIBED} for e in cad["elements"]]
+                 "described": True} for e in cad["elements"] if e["name"] in DESCRIBED]
     import yaml
     f = IC / "configs" / "ct17_cfd.yaml"
     y = yaml.safe_load(f.read_text()) or {}
@@ -1226,15 +1225,15 @@ def wing_stack(names, speed=15.0, rho=1.12, d_angle=None, dz=0.0, ground=True):
             "ground": bool(ground), "lowest_point_mm": _num(1e3 * min(float(p[:, 1].min()) for p in polys))}
 
 
-def wing_zones(include_f4=False):
-    """The span zones of both wings: [{wing, y, width (both sides), elements}], as the team describes the front wing
-    (F1 + F2 + F3 inboard, F1 + F2 outboard), or with the CAD's fourth flap as well."""
+def wing_zones():
+    """The span zones of both wings: [{wing, y, width (both sides), elements}]."""
     cad = wing_sections()
     out = []
     for wing in ("front_wing", "rear_wing"):
         for z in (cad or {}).get("zones", {}).get(wing, []):
-            names = [n for n in z["elements"] if include_f4 or n != "F4"]
-            out.append({"wing": wing, "y": z["y"], "width": _num(2 * (z["y"][1] - z["y"][0])), "elements": names})
+            names = [n for n in z["elements"] if n in DESCRIBED]
+            if names:
+                out.append({"wing": wing, "y": z["y"], "width": _num(2 * (z["y"][1] - z["y"][0])), "elements": names})
     return out
 
 
@@ -1258,7 +1257,7 @@ def tunnel_shapes():
     cad = wing_sections()
     for wing in ("front_wing", "rear_wing"):
         if cad:                                                # the real sections, where the CAD puts them
-            els = [e for e in cad["elements"] if e["wing"] == wing]
+            els = [e for e in cad["elements"] if e["wing"] == wing and e["name"] in DESCRIBED]
             polys = [np.array(e["poly"], float) for e in els]
             out["elements"][wing] = [_j(q, 5) for q in polys]
             out["le"][wing] = [_j(q[np.argmax(np.linalg.norm(q - q[0], axis=1))], 5) for q in polys]
