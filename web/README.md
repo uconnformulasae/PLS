@@ -13,7 +13,7 @@ LAPSIM_ROOT=/path/to/fsae_lapsim python web/build.py --serve      # build, then 
 |---|---|
 | `bridge/lapsim_web.py` | Calls `fsae_vd` / `fsae_pt` / `fsae_ev` and returns JSON: inputs, event results, every lap channel, subsystem data, sweeps. |
 | `build.py` | Zips the simulation packages, configs and track files into `site/py/lapsim.zip`, then runs both cars **from that zip** to write the baseline `site/data/*.json`. |
-| `site/` | The website: `index.html`, `assets/app.css`, `assets/app.js`, `assets/editors.js`, `assets/tunnel.js`, `assets/wings.js`, `assets/workbench.js`, `assets/worker.js`. This folder is what gets published. |
+| `site/` | The website: `index.html`, `assets/app.css`, `assets/app.js`, `assets/editors.js`, `assets/tunnel.js`, `assets/wings.js`, `assets/workbench.js`, `assets/multibody.js`, `assets/worker.js`. This folder is what gets published. |
 
 `site/index.html` also works opened by double-click (no server): `build.py` writes a script copy of every data file
 for that case. Running a simulation still needs the internet the first time, to download the Python runtime.
@@ -111,6 +111,27 @@ subsystem data in the browser (`preview()` in the bridge, no lap); lap times cha
   position, slot and skin can be changed, and the endplates' size and material. It feeds the 2-D tunnel directly and
   the lap simulation only through "Use this wing in the full car simulation".
 
+## Multibody
+
+The **Multibody** page (`site/assets/multibody.js`) shows the car as a multibody system, in two parts:
+
+* **Minimum-lap-time solve** (`fsae_vd.mb_study`: lumped-axle chassis, optimal control, CasADi + IPOPT): the racing
+  line, speed, steering, drive and brake from one optimisation, graded A to F with the checks behind the grade, next to
+  the quasi-steady lap and the logged runs. IPOPT is not in the browser build of CasADi, so these are computed natively
+  for the baseline car and published as `site/data/mb/<car>.json`:
+
+  ```bash
+  LAPSIM_ROOT=/path/to/fsae_lapsim python web/export_mb.py                     # IC: acceleration, skidpad, autocross
+  LAPSIM_ROOT=/path/to/fsae_lapsim python web/export_mb.py --events endurance  # add one event (others are kept)
+  ```
+
+  Then run `build.py`. Acceleration and skidpad take seconds, the autocross about 3 minutes, an endurance lap about 45. The study is built on
+  the IC powertrain model (`fsae_pt`), so the EV car has no minimum-lap-time run yet.
+* **Transient check** (`fsae_vd.multibody`: pitch, roll, heave, yaw and tire lag, RK4 at 2 ms, plain NumPy): the car
+  driven in the time domain along the quasi-steady speed profile. `build.py` writes the baseline
+  (`site/data/mb/transient_<car>.json`); **Run transient check** runs it in the browser on the car with the inputs as
+  they stand (`transient()` in the bridge), both cars, about 20 s.
+
 ## Adding a visual
 
 In `site/assets/app.js`, add one line to the list of visuals:
@@ -124,6 +145,7 @@ return it from `run()` in `bridge/lapsim_web.py`.
 
 ## Limits
 
-* Multibody optimal control (CasADi / IPOPT) and the CFD solver (Numba) do not run in a browser.
+* Multibody optimal control (CasADi / IPOPT) and the CFD solver (Numba) do not run in a browser: both are pre-computed
+  natively (`export_mb.py`, `export_cfd.py`).
 * `.xrk` log reading and fitting from logs or TTC data are not on the site.
 * First run downloads about 40 MB (cached after). Needs a browser with WebAssembly: current Safari, Chrome, Firefox.

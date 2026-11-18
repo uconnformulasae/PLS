@@ -1613,3 +1613,56 @@ def trackside(car, overrides=None, events=("acceleration", "skidpad", "autocross
         r = adjust.optimise_all_events(cfg, events=tuple(events), max_exhaustive=80, restarts=1)
     return {"summary": _table(r["summary"]), "settings": _table(r["settings_by_event"]) if len(r["settings_by_event"]) else None,
             "not_optimised": _table(r["not_optimised"], index=False), "features": [f.name for f in r["features"]], "simulations": fc.n}
+
+
+# --------------------------------------------------------------------------- multibody: transient check
+TRANSIENT_EVENTS = ("acceleration", "skidpad", "autocross")
+TRANSIENT_CH = ("t", "s", "x", "y", "v", "ax", "ay", "roll_deg", "pitch_deg", "heave_mm", "beta_deg", "yaw_rate", "delta_deg",
+                "steer_wheel_deg", "Fz_fl", "Fz_fr", "Fz_rl", "Fz_rr", "util_max", "e_lat", "aero_F", "aero_balance", "drag",
+                "zf_mm", "zr_mm", "fw_clear_mm", "grip_scale")
+
+
+def transient(car, overrides=None, events=TRANSIENT_EVENTS, driver_level=0.98):
+    """fsae_vd.multibody.Chassis: the car driven in the time domain (pitch, roll, heave, yaw, tire lag; explicit RK4 at
+    2 ms) along each event's quasi-steady speed profile. Plain numpy, so it runs in the browser; the minimum-lap-time
+    multibody solve (CasADi + IPOPT) does not, and comes pre-computed from web/export_mb.py."""
+    from fsae_vd.multibody import Chassis
+    t_start = time.time()
+    car = car.lower()
+    events = tuple(e for e in (events or TRANSIENT_EVENTS) if e in EVENTS)
+    objs = _load(car, overrides)
+    cfg = objs["vehicle"]
+    if car == "ic":
+        import fsae_pt as pt
+        res = pt.run_events_pt(cfg, objs["pt"], events=events)
+    else:
+        import fsae_ev as ev
+        res = ev.run_events_ev(cfg, objs["ev"], objs["pack"], events=events)
+    out = {"car": car, "driver_level": _num(driver_level), "events": {}, "notes": []}
+    for e in events:
+        lr = res.laps.get(e)
+        if lr is None or not hasattr(lr, "state") or getattr(lr, "track", None) is None:
+            out["events"][e] = {"error": f"no quasi-steady {e} lap with a state to follow"}
+            continue
+        try:
+            ch = Chassis(res.vehicle, dt=0.002, driver_level=float(driver_level))
+            r = ch.run(lr.track, lr, v0=1.0 if e in ("acceleration", "autocross") else None, name=e)
+        except Exception as err:  # noqa: BLE001
+            out["events"][e] = {"error": f"{type(err).__name__}: {err}"}
+            continue
+        df, idx = r.df, _pick(len(r.df), 700)
+        d = {"summary": _j({k: v for k, v in r.summary.items() if not isinstance(v, tuple)}),
+             "channels": {c: _j(df[c].to_numpy(float)[idx] * (180 / math.pi if c == "yaw_rate" else 1), 4) for c in TRANSIENT_CH if c in df},
+             "notes": [str(n) for n in r.notes if "ESTIMATED" not in n]}
+        if r.qss is not None:
+            q = r.qss
+            d["qss"] = {c: _j(q[c].to_numpy(float)[idx] * (180 / math.pi if c == "yaw_rate" else 1), 4)
+                        for c in ("v", "roll_deg", "pitch_deg", "beta_deg", "aero_F", "ax", "ay", "yaw_rate") if c in q}
+        tr = lr.track
+        if tr.x is not None:
+            j = _pick(len(tr.x), 500)
+            d["centre"] = {"x": _j(np.asarray(tr.x)[j], 5), "y": _j(np.asarray(tr.y)[j], 5)}
+        out["events"][e] = d
+        out["notes"] += [str(n) for n in r.notes if "ESTIMATED" in n and str(n) not in out["notes"]]
+    out["solve_s"] = _num(time.time() - t_start, 3)
+    return out

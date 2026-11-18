@@ -10,6 +10,8 @@ What it writes:
     site/data/ic.json       baseline CT-17 IC inputs + results (shown the moment the page opens)
     site/data/ev.json       baseline CT-17 EV inputs + results + studies
     site/data/meta.json     build time, git commit, file list
+    site/data/mb/transient_<car>.json   baseline multibody transient check (the minimum-lap-time runs,
+                            site/data/mb/<car>.json, come from web/export_mb.py, run natively before this)
     site/**/*.js copies     the same files as scripts, so index.html also works opened by double-click
 
 The baseline results are computed FROM THE BUNDLE (unzipped to a temporary folder), so a build that
@@ -84,7 +86,7 @@ def bundle(out: Path):
 def baseline(zip_path: Path, studies=True):
     """Run both cars from the unzipped bundle, in a fresh interpreter with matplotlib stubbed (as in the browser)."""
     code = r"""
-import json, sys
+import json, os, sys
 import lapsim_web as w
 out = {}
 for car in ("ic", "ev"):
@@ -93,6 +95,10 @@ for car in ("ic", "ev"):
         d["studies"] = w.ev_studies()
     json.dump(d, open(f"{sys.argv[1]}/{car}.json", "w"), allow_nan=False, separators=(",", ":"))
     print(f"  {car}: " + ", ".join(f"{e} {v['time_s']} s" for e, v in d["result"]["events"].items() if v["time_s"]))
+    tr = w.transient(car)                      # multibody transient check of the baseline (Multibody page)
+    os.makedirs(f"{sys.argv[1]}/mb", exist_ok=True)
+    json.dump(tr, open(f"{sys.argv[1]}/mb/transient_{car}.json", "w"), allow_nan=False, separators=(",", ":"))
+    print(f"  {car} transient: " + ", ".join(f"{e} {v['summary']['time_s']} s" for e, v in tr["events"].items() if "summary" in v))
 """
     (SITE / "data").mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
@@ -112,6 +118,8 @@ def script_copies():
         f = SITE / "data" / f"{name}.json"
         if f.exists():
             write(f.with_suffix(".js"), f"data/{name}.json", json.dumps(json.loads(f.read_text()), separators=(",", ":"), allow_nan=False))
+    for f in sorted((SITE / "data" / "mb").glob("*.json")):         # multibody runs (web/export_mb.py) and transient checks
+        write(f.with_suffix(".js"), f"data/mb/{f.name}", f.read_text())
     for f in sorted((SITE / "data" / "cfd").glob("*.json")):        # 3-D CFD replay files (web/export_cfd.py)
         write(f.with_suffix(".js"), f"data/cfd/{f.name}", f.read_text())
     z = SITE / "py" / "lapsim.zip"
@@ -125,7 +133,7 @@ def stamp_assets():
     old cached copy of one file against a new copy of another."""
     import hashlib
     import re
-    names = ("app.css", "app.js", "editors.js", "tunnel.js", "wings.js", "workbench.js")
+    names = ("app.css", "app.js", "editors.js", "tunnel.js", "wings.js", "workbench.js", "multibody.js")
     h = hashlib.sha1(b"".join((SITE / "assets" / n).read_bytes() for n in names)).hexdigest()[:10]
     f = SITE / "index.html"
     f.write_text(re.sub(r'(assets/(?:%s))(\?v=\w+)?"' % "|".join(re.escape(n) for n in names), r'\1?v=%s"' % h, f.read_text()))

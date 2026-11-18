@@ -519,6 +519,7 @@ function about() {
   const GUIDE = [["overview", "Run the whole car on acceleration, skidpad, autocross and endurance. Start here for lap times and points."],
     ["drivers", "Pick who is driving: mass, seating position, sight line, and their personal grip and shift numbers."],
     ["lap", "Plot any channel the simulation produces along any event."],
+    ["multibody", "The car as a multibody system: the minimum-lap-time racing line, and a time-domain check of pitch, roll and yaw."],
     ["powertrain", "Engine or motor, gearing and differential, with a draggable breathing curve and gear sliders."],
     ["energy", "Endurance lap by lap: accumulator state for the EV, cooling and fuel for the IC car."],
     ["tires", "The grip envelope the solver drives on and the wheel loads."],
