@@ -43,7 +43,7 @@ Telemetry and large result files are not stored in git. Keep them in the team's 
 Requires Python 3.11 or newer.
 
 ```bash
-git clone https://github.com/<team-org>/lapsim.git
+git clone https://github.com/uconnformulasae/lapsim.git
 cd lapsim
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
