@@ -1,0 +1,490 @@
+# =====================================================================
+#  UConn FSAE CT-17 IC — the car file
+#    vehicle:     chassis, tires, suspension, aero, brakes, events  (lapsim/config/schema.py)
+#    powertrain:  Yamaha YZF-R6 engine, 6-speed, chain, Drexler LSD (lapsim/config/schema_ic.py)
+#
+#  Values may be numbers (SI) or strings with units: "350 lbf/in", "11 in", "66.54 deg", "98.2 kPa".
+#  null = NOT RECORDED: every model that needs a null value stops and names it.
+#  File paths are relative to this file.
+#
+#  Source tags (vehicle):  N = handwritten notes (team-confirmed)   B<n> = design binder page n
+#                          S = photographed SolidWorks screen       derived = computed from tagged values
+#  Source tags (powertrain): R6 = Yamaha YZF-R6 2017+ service manual   LOG = identified from the 2026
+#                          Michigan AiM/Syvecs logs   RULE = FSAE rules   PT<n> = CT-17 IC Powertrain
+#                          Design Binder page n   ASSUMED = engineering estimate, replace these first
+# =====================================================================
+name: CT17IC
+kind: ic
+
+vehicle:
+  # NOTE: the rear hardpoint file is titled 'CT-16IC Suspension Rear' inside the export; it is the CT17 rear (team).
+
+  mass:
+    mass_no_driver: 211.4 kg          # B67
+    driver_mass: 68 kg                # B67 (design driver)
+    front_weight_fraction: 0.53       # B67 0.50, with driver - MICHIGAN 53%
+    left_weight_fraction: 0.51        # B67 0.50, - MICHIGAN 51%
+    cg_height: 11 in                  # N, B67 (279.4 mm, physical test)
+    unsprung_mass_front: 8.25 kg      # CT 16 Weight Spreadsheet
+    unsprung_mass_rear: 8.25 kg       # CT 16 Weight Spreadsheet
+    unsprung_cg_height: 5.0 in        # defaults to tire radius if null
+    yaw_inertia: null                 # MISSING (transient only)
+
+  geometry:
+    wheelbase: 61 in                  # N, B7
+    track_front: 47 in                # N, B7
+    track_rear: 46 in                 # N, B7
+
+  tires:
+    tire_radius: 8 in                 # B22 (16.0 in OD)
+    width: 7.5 in                     # B10
+    mu0: 1.65                         # from TTC - CHECK!
+    mu_fz: -0.00047                   # from TTC - CHECK!
+    fz0: 1000 N
+    mux_over_muy: 1.0                 # set from TTC longitudinal data if available
+    gamma_opt_deg: -0.5 deg           # from TTC - CHECK!
+    k_gamma: 0.00625                  # from TTC - CHECK! was 0.625: per deg^2 that removed 62% grip per deg^2 (accel 7.5 s)
+    cornering_stiffness_per_load: 25.0 # 1/rad. TTC fit gave 12.9 (peak slip ~20 deg, too soft for FSAE tires; spun the transient lap). 25 = typical FSAE, peak ~8-10 deg
+    pneumatic_trail: null             # MISSING
+    lambda_mu: 1.0                    # calibrated rig->track scaling
+    rolling_resistance: null          # FIT from coast-down
+    pressure_front: 10 psi            # B49 C-Lot AutoX sheet (hot)
+    pressure_rear: 9 psi              # B49
+    kt_pressures: [10 psi, 12 psi, 14 psi]          # B13
+    kt_loads: [200 lbf, 300 lbf, 400 lbf]           # B13
+    kt_rates:                                       # B13, lbf/in
+      - [652 lbf/in, 700 lbf/in, 748 lbf/in]
+      - [724 lbf/in, 774 lbf/in, 824 lbf/in]
+      - [755 lbf/in, 809 lbf/in, 859 lbf/in]
+
+  front:
+    rod_type: pull                    # B67  ('pull' or 'push')
+    rod_angle_deg: 66.54 deg          # derived from B59/B62 (arccos 138.42/347.69)
+    rocker_force_ratio: 0.5121        # derived from B59 (F_d/F_p) -> represents Mechanical Advantage
+    rocker_lp: 1.80 in                # CAD, Front Rocker Drawing
+    rocker_ld: 4.00 in                # CAD, Front Rocker Drawing (sqrt(0.430^2 + 1.748^2)
+    rocker_alpha_deg: 72.38 deg       # CAD, Front Rocker Geometry
+    rocker_beta_deg: 109.09 deg       # CAD, Front Rocker Geometry
+    rod_length: 7.284 in              # Foundation Order Sheet
+    rod_od: 0.5 in                    # Foundation Order Sheet
+    rod_id: 0.465 in                  # Foudation Order Sheet (rod_od - wall width)
+    motion_ratio: 1.18                # B67
+    motion_ratio_convention: wheel/damper   # B62: 2/(Lext-Lcomp)
+    spring_rate: 350 lbf/in           # B49 setup sheet (rocker model uses 250 -> confirm)
+    spring_preload: 0.65 in           # B49
+    damper_static_length: 7.34 in     # B22, matches B62 derivation
+    damper_stroke_available: 57 mm    # Ohlins TTX25 MKII specifications
+    damping_ratio_bump: 0.90          # B67 at 50 mm/s
+    damping_ratio_rebound: 0.80       # B67
+    arb_blade_length: 4.199 in        # CAD, Front Blade
+    arb_torsion_length: 19.96 in      # B43
+    arb_od: 12.7 mm                   # B43
+    arb_id: 11.278 mm                 # B43
+    arb_motion_ratio: null            # MISSING (blade-tip travel per wheel travel)
+    arb_roll_stiffness: null          # or give the ARB roll stiffness directly
+    static_camber_deg: -1.25 deg      # N, B67
+    static_toe_deg: 0.0 deg           # B67
+    roll_center_height: 3.2 in        # N (confirmed)
+    fvsa_length: 85 in                # derived from B19 camber ROC
+    caster_deg: 4.0 deg               # N, B67
+    kpi_deg: 16.0 deg                 # B67
+    scrub_radius: 35.3 mm             # B67, N = 1.53 in
+    mechanical_trail: 14.3 mm         # B67
+    svsa_length: 100 in               # B19, B22
+    hardpoints: null                  # MISSING. Format (left corner, front view, metres):
+                                      #  {UBJ: [y, z], LBJ: [y, z], UI: [y, z], LI: [y, z]}
+                                      #  y = lateral from car centreline (+ outboard), z = height
+    ride_height: 2.75 in              # B49 AutoX (ground to front bulkhead)
+    hardpoint_file: hardpoints/CT17_front.csv   # OptimumK export, CT17 front
+    use_hardpoint_rc: true            # hardpoints give 3.50 in; notes give 3.2 in -> see README
+    use_hardpoint_motion_ratio: true  # hardpoints give 1.275; binder sheet gives 1.18
+    use_hardpoint_anti: true          # hardpoints reproduce 49.8% anti-dive
+
+  rear:
+    rod_type: pull                    # B67
+    rod_length: null                  # MISSING: rear pull rod length
+    rod_od: 0.5 in                    # Foundation Order Sheet
+    rod_id: 0.465 in                  # Foundation Order Sheet
+    rod_angle_deg: 69.47 deg          # derived from B59/B62 (arccos 347.6/138.42)
+    rocker_lp: 1.80 in                # CAD, Rear Rocker Drawing
+    rocker_ld: 3.90 in                # CAD, Rear Rocker Drawing 
+    rocker_alpha_deg: 74.13 deg       # CAD, Rear Rocker Geometry
+    rocker_beta_deg: 98.02 deg        # CAD, Rear Rocker Geometry
+    rocker_force_ratio: 2.117         # derived from B59/B62 (arccos 138.42/347.6)
+    motion_ratio: 1.12                # B67
+    motion_ratio_convention: wheel/damper
+    spring_rate: 250 lbf/in           # B49
+    spring_preload: 0.65 in           # B49
+    damper_static_length: 7.34 in     # B22
+    damping_ratio_bump: 0.90          # B67
+    damping_ratio_rebound: 0.80       # B67
+    arb_blade_length: 4.230 in        # CAD, Rear Blade (unit added: without it 4.23 read as metres)
+    arb_torsion_length: 18.46 in      # B43
+    arb_od: 12.7 mm
+    arb_id: 11.278 mm
+    arb_motion_ratio: null            # MISSING
+    static_camber_deg: -1.25 deg      # N, B67
+    roll_center_height: 2.3 in        # N (confirmed)
+    fvsa_length: 80 in                # derived from B19
+    caster_deg: 4.0 deg               # N (confirmed)
+    kpi_deg: 16.0 deg                 # N (confirmed)
+    svsa_length: null                 # MISSING
+    ride_height: 4.125 in             # B49
+    hardpoint_file: hardpoints/CT17_rear.csv   # OptimumK export (titled CT-16IC; CT17 rear per team)
+    use_hardpoint_rc: true            # hardpoints give 2.50 in; notes give 2.3 in
+    use_hardpoint_motion_ratio: true  # hardpoints give 1.200; binder sheet gives 1.12
+    use_hardpoint_anti: true          # hardpoints reproduce 10.0% anti-lift, 44.9% anti-squat
+
+  anti:
+    anti_dive: 0.50                   # N (confirmed), B19
+    anti_lift: 0.10                   # B19 (rear, braking)
+    anti_squat: 0.45                  # N, B19
+
+  steering:
+    ackermann_fraction: 0.92          # N (B67 lists 0.99 -> confirm)
+    steer_ratio: 4.9                  # B67
+    steering_arm: 76.2 mm             # B67
+    pinion_radius: 0.6 in             # B55
+    rack_efficiency: 0.85             # B55
+    ujoint_efficiency: 0.87           # B55
+    ujoint_angle_deg: 32.0 deg        # Controls
+    wheel_radius: 5 in                # B55
+
+  aero:
+    # Attitude-sensitive component model (lapsim/subsystems/aero.py). Tags: AB<n> = CT-17IC Aero Binder slide n,
+    # RENDER = scaled from the AB8 side-view render (12.3 px/in), ASSUMED = engineering estimate - replace with CFD.
+    model: components                 # 'components' or 'constant' (old model: fixed ClA_front/rear, CdA)
+    rho: null                         # null -> from the ambient below
+    ambient_pressure: 95.9 kPa        # LOG engine-off MAP, 2026 Michigan (as powertrain.ambient)
+    ambient_temperature_C: 25         # ASSUMED (powertrain.ambient; logged intake air 29-34 degC)
+    reference_area: 1.098 m^2         # AB22 full-car frontal area used for CL / CD
+    calib_ClA: 1.987 m^2              # AB38 coast-down, wings on: CL 1.81 x 1.098 m^2  (3D CFD AB33: 1.844 -> 2.02)
+    calib_CdA: 1.208 m^2              # AB38 coast-down: CD 1.10 x 1.098 m^2            (3D CFD AB33: 1.142 -> 1.25)
+    calib_speed: 45 mph               # AB36-38 coast-down speed
+    calib_front_fraction: null        # centre of pressure of the downforce alone; null -> solved from the axle-load split
+                                      # (was 0.562: AB8 34.29 in ahead of the rear axle / 61 in = 62.16 / 111 lbf)
+    calib_front_axle_share: 0.534     # MEASURED (team, 2026-11): 53.4 % of the aero load on the front axle
+    ClA_front: null                   # only used with model: constant
+    ClA_rear: null
+    ref_speed: 35 mph                 # B65 / AB8
+    ref_downforce_front: 62.16 lbf    # B65 / AB8 (CHECK: 111 lbf at 35 mph implies ClA 3.3 m^2, the test gives 2.0)
+    ref_downforce_rear: 48.84 lbf     # B65 / AB8
+    CdA: null                         # only used with model: constant
+    aero_iterations: 3
+    components:
+      front_wing:                     # 4 elements FX76mp120 / GOE-448 / Ah7476 x2 (AB44)
+        cfd_downforce: 42.7 lbf       # AB22 3D full-car CFD split (FL = 42.7 + 56.864 - 17.1)
+        cfd_drag: 10.3 lbf            # AB22 (FD = 39.32 + 10.3 + 17.231)
+        x_from_front_axle: 23 in      # RENDER: centre of pressure ahead of the front axle
+        z: 4.5 in                     # RENDER: height of the drag line
+        span: 54.5 in                 # CAD (A61-17IC): between the outer endplates = the front tires' outer faces
+        chord: 350 mm                 # AB44 main element
+        ground_clearance: 4.54 in     # main plane: MEASURED 3.75 in at the wing's lowest edge + 20 mm (CAD)
+        dClA_dalpha: 0.036            # ASSUMED m^2/deg, ~3.5 %/deg of nose-down pitch
+        alpha_lin_deg: 3 deg          # ASSUMED: pitch range before the flaps saturate
+        yaw_loss_10deg: 0.10          # ASSUMED: low-aspect wing with endplates
+        yaw_drag_10deg: 0.05          # ASSUMED
+        side_area: 0.25 m^2           # ASSUMED endplates, side-force slope per rad
+        induced_drag: 0.5             # ASSUMED share of wing drag that follows CL^2
+        mass: 13.7 lb                 # AB11
+      rear_wing:                      # 4 elements NACA 9410 / GOE-448 / Ah7476 x2 (AB44)
+        cfd_downforce: 56.864 lbf     # AB22
+        cfd_drag: 17.231 lbf          # AB22
+        x_from_front_axle: -57.4 in   # RENDER: 3.6 in ahead of the rear axle
+        z: 35 in                      # RENDER
+        span: 34 in                   # CAD (A62-17IC): between the endplates
+        dClA_dalpha: 0.041            # ASSUMED ~3 %/deg
+        alpha_lin_deg: 3 deg
+        yaw_loss_10deg: 0.06          # ASSUMED (large endplates)
+        yaw_drag_10deg: 0.05
+        side_area: 0.9 m^2            # ASSUMED: AB30 endplates ~24 x 18 in each side
+        induced_drag: 0.5
+        mass: 14.8 lb                 # AB12
+        drs_cl_ratio: 0.54            # AB27 full car CL 1.844 -> 1.259 with DRS open
+        drs_cd_ratio: 0.08            # AB12 rear wing drag 22.43 -> 1.80 lbf
+      body:                           # chassis, sidepods + radiator shroud, wheels, driver
+        cfd_downforce: -17.1 lbf      # AB22 (body makes lift)
+        cfd_drag: 39.32 lbf           # AB22
+        x_from_front_axle: null       # solved from calib_front_fraction
+        z: 14 in                      # ASSUMED drag line
+        span: 47 in
+        dClA_dalpha: 0.02             # ASSUMED
+        yaw_drag_10deg: 0.10          # ASSUMED
+        side_area: 1.0 m^2            # ASSUMED side profile
+    drs:
+      enabled: false                  # AB27/31: DRS was not fitted to the car (what-if only)
+      max_ay: 0.4 g                   # open on straights below this lateral acceleration, when accelerating
+    settings:                         # per wing setting (values MISSING; B49-52 name the settings)
+      full_aggressive: {ClA_front: null, ClA_rear: null, CdA: null}
+      low_drag: {ClA_front: null, ClA_rear: null, CdA: null}
+
+  powertrain:
+    kind: IC                          # 'EV' or 'ICE'
+    max_power: null                   # FIT from acceleration log, or give at-wheel value
+    max_drive_force: null             # FIT from acceleration log
+    torque_curve_file: null
+    final_drive_ratio: null           # 32T rear sprocket (B49); drive sprocket MISSING
+    drivetrain_efficiency: null
+    diff: load_proportional           # notes: diff "detects load, % splits power"
+
+  brakes:
+    front_bias: 0.60                  # B19
+    max_decel: null                   # tire-limited unless set (B19 design case was 1.88 g)
+    # brake torque per wheel per bar of line pressure (dynamic tire / braking simulator).
+    # Fitted from the CT-16 log 1719 (tire_dynamic.fit_brake_torque, r2 0.58) - CHECK against the
+    # CT-17 calipers, or replace with the hardware (piston_area_*, pad_mu, rotor_radius_*).
+    torque_per_bar_front: 4.54 N*m/bar
+    torque_per_bar_rear: 4.72 N*m/bar
+    rear_pressure_ratio: 0.575        # CT-16 log 1719: rear = 0.575 x front + 0.84 bar - CHECK (CT-17 rear sensor is faulty)
+    rear_pressure_offset: 0.84 bar
+    # Front corner hardware, measured from Rotor_Corner_Assembly.SLDASM (tools/brake_corner.py):
+    # 542-01-17IC rotor, 542-03-16IC pads, "Brake Calipers New", 6 floating buttons.
+    rotor_radius_front: 82.2 mm       # CAD effective radius = caliper piston axis (pad area centre is at 80.0 mm)
+    rotor_outer_radius_front: 97.12 mm  # CAD, 194.2 mm OD; pads sweep r = 64.5-95.3 mm
+    rotor_thickness_front: 4.75 mm    # CAD
+    rotor_mass_front: 0.641           # kg: CAD volume 81.7 cm^3 x 7850 kg/m^3 - material ASSUMED steel, WEIGH one
+    rotor_area_front: 0.04288         # m^2, CAD: whole rotor surface (faces, slots, edges)
+    pad_area_front: 12.10 cm^2        # CAD friction face of one pad; lining 4.19 mm on a 3.53 mm backing plate
+    rotor_specific_heat: 470          # J/(kg*K), ASSUMED steel
+    rotor_heat_fraction: 0.90         # ASSUMED share of friction heat into the rotor
+    rotor_emissivity: 0.55            # ASSUMED
+    rotor_h0: null                    # convection h = h0 + h1 v^0.8; null -> 10 + 9 v^0.8 W/(m^2*K) (ASSUMED) until a
+    rotor_h1: null                    #   CT-17 log with rotor IR sensors is fitted (brakes.fit_rotor_cooling)
+    # MISSING - the caliper CAD has no bore: the housing boss on the piston axis is 36.83 mm, so the
+    # piston is smaller. A 1.12 in (28.45 mm) piston would need pad_mu 0.43 to give the fitted
+    # 4.54 N*m/bar front. Give the real piston size and pad compound to replace the fit.
+    piston_area_front: null
+    piston_area_rear: null
+    pad_mu: null
+    # MISSING - rear corner (rotor, pads, caliper): no CAD yet. The rotor model uses the front rotor
+    # for the rear until these are given.
+    rotor_radius_rear: null
+    rotor_mass_rear: null
+    rotor_area_rear: null
+    pad_area_rear: null
+    # MISSING - pedal box (brakes.pedal_force): master cylinder bores, pedal ratio, balance bar setting
+    master_cylinder_area_front: null
+    master_cylinder_area_rear: null
+    pedal_ratio: null
+    balance_bar_front: null
+
+  events:
+    accel_length: 75 m                # FSAE rules
+    skidpad_radius: 9.125 m           # rules: 15.25 m inner dia + half the 3 m lane
+    autocross_track: ../../tracks/michigan_2026/autocross_2026.csv
+    endurance_track: ../../tracks/michigan_2026/endurance_2026_full_site.csv   # or endurance_2026_backstretch.csv
+    endurance_distance: 22 km         # FSAE rules
+    tmin_accel: 4.126 s               # IC FSAE Michigan Official 
+    tmin_skidpad: 4.878 s             # IC FSAE Michigan Official 
+    tmin_autocross: 39.031 s          # IC FSAE Michigan Official 
+    tmin_endurance: 1420.853 s        # IC FSAE Michigan Official 
+
+  adjust:                             # current trackside settings, relative to the hardpoint design
+    camber_shim_front: 0 in           # + thickness = more positive camber (notes)
+    camber_shim_rear: 0 in
+    tie_rod_front: 0 mm               # tie-rod length change (toe)
+    tie_rod_rear: 0 mm
+    pull_rod_front: 0 mm              # longer = lower (notes)
+    pull_rod_rear: 0 mm
+    wing_setting: null                # name in aero.settings once ClA/CdA per setting are known
+
+  adjustability:                      # what the car can be set to (null = not recorded -> not optimised)
+    spring_rates: [150 lbf/in, 200 lbf/in, 250 lbf/in, 300 lbf/in, 350 lbf/in, 400 lbf/in]   # notes (unit CHECK)
+    arb_blades: [1.755 in, 2.42 in, 3.14 in]   # B43-45
+    arb_can_disconnect: false         # not recorded
+    shim_thicknesses: [0.02 in, 0.03 in] # N (UNIT CHECK)
+    camber_shim_range: [0 in, 0.03 in]   # [min, max] added thickness, e.g. [-0.06 in, 0.06 in]
+    tie_rod_range: null               # MISSING: [min, max] length change
+    tie_rod_step: null                # MISSING: how much the tie rod changes per smallest adjustment
+    pull_rod_range: null              # MISSING: [min, max] length change
+    pull_rod_step: null               # MISSING: how much the tie rod changes per smallest adjustment
+    pressure_range: 32 psi            # factory minimum (hot pressure)
+    wing_settings: []                 # e.g. [full_aggressive, low_drag] once aero.settings has values
+
+  sim:
+    ds: 0.5
+    v_grid_max: 40.0
+    n_v: 30
+    n_ay: 25
+    load_transfer_iterations: 6
+
+powertrain:
+  ambient:
+    pressure: 95.9 kPa              # LOG      engine-off MAP (barometric) in the 2026 MIS logs
+    temperature: 25                 # ASSUMED  degC (logged intake air 29-34 degC)
+    intake_temp_rise: 5             # LOG      degC, ACT above ambient (S8_act1)
+
+  engine:
+    displacement: 599 cc            # R6
+    cylinders: 4                    # R6
+    bore: 67.0 mm                   # R6
+    stroke: 42.5 mm                 # R6
+    compression_ratio: 13.1         # R6, PT8
+    dyno_file: engine_dyno_2026.csv   # PT17/PT61 motor dyno (normal tune) 
+    dyno_pressure: 101.325 kPa      # ASSUMED  dyno correction standard (hub dyno screen shows BARO 29.92 inHg, PT63)
+    dyno_temperature: 25            # ASSUMED  degC
+    hub_dyno_power: 73.17 hp        # PT63/PT8 at the hubs -> driveline efficiency 73.2/79.2 = 92.3 %
+    hub_dyno_rpm: 11108             # PT63
+    torque_scale: 1.0               # tune: 1.0 normal; endurance tune 0.973 (PT64: 77.35 vs 79.48 hp)
+    rev_limit: 13000                # LOG      rpm (logged max 13 029, rev-limit flag seen)
+    idle_rpm: 3000                  # ASSUMED  rpm
+    launch_rpm: 12200               # LOG      rpm held during the 2026 accel launches
+    min_drive_rpm: 4500             # ASSUMED  lowest usable rpm before a downshift
+    # volumetric efficiency vs rpm (referenced to plenum density). Prior shape for a
+    # restricted R6; replace it with a fit to the logged data.
+    ve_rpm: [3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 11000, 12000, 13000, 14000]
+    ve:     [0.62, 0.70, 0.78, 0.84, 0.88, 0.92, 0.95, 0.97, 0.98, 0.97, 0.94, 0.90]
+    eta_indicated: 0.37             # ASSUMED  gross indicated efficiency at lambda 0.9 (fit from logs)
+    lambda_wot: 0.92                # LOG      median WOT lambda (S8_lam1_01 0.90-1.0)
+    lambda_part: 1.00               # LOG      part load
+    # friction mean effective pressure  FMEP = a + b*Sp + c*Sp^2  [kPa], Sp = mean piston speed [m/s]
+    fmep_a: 30                      # ASSUMED  kPa
+    fmep_b: 5.0                     # ASSUMED  kPa/(m/s)
+    fmep_c: 0.30                    # ASSUMED  kPa/(m/s)^2
+    exhaust_back_pressure: 105 kPa  # ASSUMED  for pumping losses
+    crank_inertia: 0.010            # ASSUMED  kg m^2 crank + alternator rotor + primary drive gear (at crank)
+    derate_start_temp: 105          # ASSUMED  degC coolant temperature where the ECU starts pulling timing
+    derate_per_degC: 0.008          # ASSUMED  torque fraction lost per degC above that
+    overrun_fuel_cut: true          # ASSUMED  Syvecs overrun fuel cut active
+    fuel_scale: 1.0                 # fit      logged injector flow / modelled fuel flow (fit_engine)
+    # simplified wave-tuning what-if: changing a length moves the VE peak in rpm
+    intake_runner_length: 4.11 in   # PT19  (CT-17, -2.312 in vs CT-15)
+    exhaust_primary_length: 0.38 m  # ASSUMED  titanium equal-length 4-2-1 (PT24-29); length not stated
+    intake_runner_ref: 4.11 in      # lengths the dyno / VE fit was measured with
+    exhaust_primary_ref: 0.38 m
+    exhaust_event_duration: 232     # ASSUMED  deg, ED in the binder's header formula P = 850 ED / rpm - 3 (PT27)
+    tuning_amplitude: 0.05          # ASSUMED  VE gain of one tuned wave
+
+  intake:
+    restrictor_diameter: 20 mm      # RULE     20 mm gasoline, 19 mm E85
+    restrictor_cd: 0.95             # ASSUMED  converging-diverging venturi discharge coefficient
+    diffuser_recovery: 0.70         # ASSUMED  diffuser pressure recovery (sets the MAP at which the throat chokes)
+    plenum_volume: 0.603 gal        # PT19 (transient MAP model only)
+    loss_coef: 0                    # fit      air filter + throttle loss dp = K m^2 [Pa/(kg/s)^2] (fit_engine)
+
+  fuel:
+    type: gasoline                  # PT8/PT43 93 octane  ('gasoline' or 'e85')
+    tank_volume: 5.2 L              # PT41 (5.6 -> 5.2 L)
+    start_fill: 5.2 L               # full tank
+    endurance_fuel_normal: 5.006 L  # PT64 binder estimate, normal tune (validation)
+    endurance_fuel_endurance_tune: 4.654 L   # PT64 endurance tune (validation)
+    endurance_tune_fuel_scale: 0.930  # PT64 4.654/5.006
+    injectors: Bosch EV6 210 cc/min   # PT41/42
+
+  clutch:
+    torque_capacity: 140            # ASSUMED  N m at the crank, wet multi-plate slipper clutch
+    inertia: 0.012                  # ASSUMED  kg m^2 clutch basket + plates + input shaft (at clutch speed)
+
+  gearbox:
+    primary_ratio: 2.073            # R6  85/41
+    gear_ratios: [2.583, 2.000, 1.667, 1.444, 1.286, 1.150]   # R6  31/12 32/16 30/18 26/18 27/21 23/20
+    primary_efficiency: 0.985       # ASSUMED  straight-cut primary gear
+    mesh_efficiency: 0.980          # ASSUMED  one gear pair per gear (constant mesh)
+    loss_scale: 1.0                 # fit      all stage losses x this, so crank -> hub = hub dyno (PT63)
+    spin_loss_a: 0.4                # ASSUMED  N m at the output shaft, oil churning + bearings
+    spin_loss_b: 0.0008             # ASSUMED  N m/(rad/s)
+    output_inertia: 0.004           # ASSUMED  kg m^2 output shaft + countershaft sprocket
+    upshift_time: 0.090             # LOG      s torque interruption (gear-up solenoid / ignition cut)
+    downshift_time: 0.150           # LOG      s (braking zone, no lap-time cost in the QSS model)
+    shift_rpm: null                 # null = optimal (crossing of tractive-force curves, capped by rev limit)
+    lowest_running_gear: 1          # 2 = never use 1st after the launch (what the 2026 drivers did)
+    gear_channel_offset: 2          # LOG      logged S8_gear = real gear + 2 (from ratio steps)
+    shifter: electro-pneumatic paddle   # LOG (S8_paddleSwitch, gearUp/DownOut)
+
+  final_drive:
+    front_sprocket: 11              # PT55  11T Yamaha R6 sprocket
+    rear_sprocket: 32               # PT55  MJ Corse 32T  (PT45 force table uses 30T; logs rule 11/30 out)
+    rear_sprocket_options: [30, 31, 32]
+    front_sprocket_options: [10, 11, 12]
+    chain: "520"                    # ASSUMED  pitch 5/8 in; PT77 tensile strength 7508 lbf
+    chain_tensile_strength: 7508 lbf  # PT77 (design max 2327 lbf, FOS 3.28)
+    chain_pitch: 15.875 mm
+    chain_mass_per_m: 0.85          # ASSUMED  kg/m (520 O-ring)
+    chain_artic_coef: 0.205         # ASSUMED  loss = coef*(1/z_front + 1/z_rear)  -> ~97.5 % at 11/32
+    centre_distance: 0.42 m         # ASSUMED  countershaft to diff axis
+    sprocket_inertia: 0.010         # ASSUMED  kg m^2 rear sprocket + diff carrier (at axle)
+
+  differential:
+    type: drexler                   # 'drexler' | 'open' | 'spool' | 'ideal' (load-proportional, old default)
+    model: Drexler FSAE V3 adjustable
+    preload: 43                     # PT45  N m
+    drive_ramp_deg: 60              # PT45  accel ramp
+    coast_ramp_deg: 45              # PT45  deceleration ramp
+    lockup_at_45deg: 0.51           # PT45  Drexler theoretical lock-up: 30deg 88 %, 40deg 60 %, 45deg 51 %  ->  L = 0.51 / tan(ramp)
+    friction_faces: 6               # ASSUMED  number of friction faces in the plate pack
+    plate_mu: 0.12                  # ASSUMED  oil-lubricated steel/steel
+    friction_radius: 35 mm          # ASSUMED  mean plate radius
+    ramp_radius: 32 mm              # ASSUMED  radius of the ramp contact
+    efficiency: 0.985               # ASSUMED
+    inertia: 0.015                  # ASSUMED  kg m^2 housing + plates (at axle)
+    preload_options: [5, 10, 20, 30, 43, 60]
+    ramp_options: [30, 40, 45, 50, 60]
+
+  halfshaft:
+    cv_type: tripod
+    cv_efficiency: 0.995            # ASSUMED  per joint at 0 deg
+    cv_loss_per_deg: 0.0006         # ASSUMED  efficiency lost per degree of joint angle
+    cv_angle_deg: 6                 # ASSUMED  static plunge/articulation angle
+    torsional_stiffness: 6000       # ASSUMED  N m/rad per shaft (transient model)
+    damping: 4                      # ASSUMED  N m s/rad
+    od: 25.4 mm                     # ASSUMED  tube OD (stress)
+    id: 19.05 mm                    # ASSUMED
+    inertia: 0.002                  # ASSUMED  kg m^2 per shaft
+
+  wheels:
+    rolling_radius_factor: 0.975    # LOG/ASSUMED effective rolling radius / unloaded radius
+    rear_corner_inertia: 0.20       # derived  kg m^2 tire 0.133 (binder) + 10 in wheel + hub + rotor
+    front_corner_inertia: 0.18      # derived
+    bearing_drag: 0.3               # ASSUMED  N m per wheel bearing
+    slip_stiffness_per_load: 25     # ASSUMED  tire longitudinal slip stiffness / Fz (TTC drive/brake data)
+
+  cooling:
+    core_width: 0.30 m              # ASSUMED  radiator core
+    core_height: 0.25 m             # ASSUMED
+    ua_ref: 900                     # ASSUMED  W/K core UA at the reference air flow (fit_thermal)
+    air_flow_ref: 0.40              # ASSUMED  m^3/s reference air flow for ua_ref
+    duct_ratio: 0.30                # ASSUMED  core face velocity / vehicle speed
+    fan_flow: 0.18                  # ASSUMED  m^3/s fan flow through the core at standstill
+    fan_power: 92                   # PT71  10 in fan, 7 A steady (14 A start-up)
+    fan_on_temp: 98                 # ASSUMED  degC (ECU fan control)
+    fan_off_temp: 92                # ASSUMED  degC
+    thermostat_open: 80             # ASSUMED  degC (R6 thermostat 69-82)
+    thermostat_full: 90             # ASSUMED  degC
+    pump_type: electric             # PT66  Davies Craig EWP80 electric pump (flow independent of rpm)
+    pump_flow: 50                   # PT67  L/min (40-60 L/min quoted)
+    pump_flow_per_krpm: 0.06        # only for pump_type: mechanical
+    radiator: Mishimoto MMPS-YXR700-08   # PT66; tested 19-28 kW rejection at 40-60 L/min (PT67)
+    heat_to_coolant: 0.27           # ASSUMED  fraction of fuel energy (fit_thermal)
+    heat_to_oil: 0.06               # ASSUMED
+    thermal_mass_coolant: 18000     # ASSUMED  J/K coolant + block/head (fit_thermal)
+    thermal_mass_oil: 9000          # PT33  dry sump, 1 gal Mobil 1 10W-40 reservoir + lines
+    oil_to_coolant_ua: 400          # ASSUMED  W/K R6 water-to-oil cooler (oil runs ~15 K above coolant)
+    start_temp: 75                  # LOG      degC coolant at the start of a run
+
+  electrical:
+    alternator_max_power: 380       # ASSUMED  W (R6 stator/regulator) above alternator_full_rpm
+    alternator_full_rpm: 5000
+    alternator_efficiency: 0.55     # ASSUMED  mechanical -> electrical (permanent-magnet + shunt regulator)
+    alternator_drag: 0.25           # ASSUMED  N m friction/eddy drag at the crank
+    battery_capacity_ah: 4.6        # ASSUMED  LiFePO4
+    battery_voltage: 13.2           # LOG      V (S8_vbat 13.1-13.4)
+    start_soc: 0.95
+    loads:                          # W, ASSUMED continuous unless noted
+      ecu: 20
+      fuel_pump: 60
+      injectors_ignition: 55
+      logger_dash: 18
+      shifter: 12                   # average of the solenoid pulses
+      water_pump_electric: 90       # PT66  Davies Craig EWP80 (~7 A)
+      misc: 15
+
+  resistance:                       # used only when the vehicle-dynamics config has no value
+    assumed_CdA: 1.22               # PT4/PT5  drag 41.2 lb (taken at 35 mph, like B65) -> 1.22 m^2; also fit from logs
+    assumed_Crr: 0.020              # ASSUMED
+
+  scoring:
+    # FSAE efficiency: EF = (Tmin/T) * (CO2min/CO2), per lap. Check against the rules year.
+    co2_min_per_lap: 0.065          # ASSUMED  kg CO2 per lap of the most efficient team
+    t_min_lap: null                 # s; null -> endurance tmin / laps if set
+    ef_min: 0.10                    # ASSUMED  rules: EF of the worst scoring team
+    ef_max: 0.85                    # ASSUMED  rules: best EF at the event

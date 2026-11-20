@@ -1,0 +1,78 @@
+# =====================================================================
+#  CT-17 IC side-view aero geometry, for the website's 2-D wind tunnel and wing cards
+#  (web/bridge/lapsim_web.py: tunnel_shapes, wing_elements). Not used by the lap simulation.
+#  Car axes: x rearward from the front axle, y to the driver's right, z up from the ground; metres.
+#  Source tags: B<n> design binder page, AB<n> aero binder slide, RENDER scaled from the AB8 side-view
+#  render, PHOTO read from the 2026 team photos, CAD from the SolidWorks exports, MEASURED on the car,
+#  ASSUMED engineering estimate. The real wing sections cut from the CAD are web/bridge/wing_sections.json;
+#  the NACA elements below are the fallback when that file is missing.
+# =====================================================================
+wheels:
+  radius: 0.2032              # 16.0 in OD, B22
+  width: 0.1905               # 7.5 in, B10
+  rim_radius: 0.127           # 10 in wheel, PT (ASSUMED rim face recess)
+  squash: 0.006               # ASSUMED loaded-radius deflection (contact patch into the ground)
+  rotating: true
+
+body:                         # body panels over the spaceframe, and the engine: superellipse sections.
+  # Up to the main hoop the sections are the frame's own envelope (CAD, A13-17IC Spaceframe: half-width,
+  # lowest tube, top of the side structure), i.e. panels ASSUMED to close the frame sides and the
+  # cockpit up to its rim. Behind the main hoop the widths and floor are the frame's, the top is the
+  # engine (ASSUMED). The nose cone and its cover are CAD (cad.assemblies, 633-01-17IC Nood).
+  # [x, half_width, z_bottom, z_top, exponent]
+  stations:
+    - [-0.62, 0.120, 0.200, 0.420, 2.5]    # inside the nose cone
+    - [-0.583, 0.204, 0.105, 0.498, 3.5]   # CAD front bulkhead
+    - [-0.28, 0.213, 0.118, 0.568, 3.5]    # CAD
+    - [ 0.02, 0.238, 0.118, 0.643, 3.5]    # CAD
+    - [ 0.12, 0.247, 0.105, 0.670, 3.5]    # CAD front roll hoop (hoop top 0.70; lowest frame point 0.069 = the 2.75 in ride height)
+    - [ 0.32, 0.274, 0.092, 0.586, 3.5]    # CAD cockpit sides
+    - [ 0.52, 0.301, 0.067, 0.506, 3.5]    # CAD
+    - [ 0.72, 0.328, 0.043, 0.429, 3.5]    # CAD
+    - [ 0.93, 0.320, 0.053, 0.520, 3.5]    # CAD main roll hoop (hoop top 1.106)
+    - [ 1.12, 0.274, 0.077, 0.600, 3.0]    # CAD width and floor; top ASSUMED (engine)
+    - [ 1.32, 0.236, 0.101, 0.600, 2.8]    #   "
+    - [ 1.62, 0.201, 0.106, 0.470, 2.6]    #   " rear of the frame (x = 1.654)
+    - [ 1.82, 0.070, 0.150, 0.330, 2.2]    # ASSUMED (diff / sprocket)
+
+driver:                       # ASSUMED 95th-percentile template seated position; helmet kept under the CAD main hoop (top 1.106 at x 0.94)
+  helmet_centre: [0.80, 0.0, 0.920]
+  helmet_radius: 0.135
+  torso_centre: [0.86, 0.0, 0.70]
+  torso_radii: [0.14, 0.21, 0.22]
+
+front_wing:                   # THREE elements on the car: F1 + F2 + F3 (TEAM, 2026-11-15). F1 and F2 run out to the outer endplate,
+                              # F3 only from the inner to the middle endplate. AB44 lists four (FX76mp120 / GOE-448 / Ah7476 x2) and
+                              # the CAD assembly holds a fourth flap, 611-11-17IC F4: it is NOT on the car and was removed here
+                              # (parametric 4th element: naca4412, chord 0.110, 46 deg, gap 0.011, overlap 0.011).
+                              # NACA stand-ins below (ASSUMED); the CAD parts replace them when cad.enabled.
+  span: 1.3840                # CAD: 54.5 in between the outer endplates (= the front tires' outer faces)
+  ground_clearance: 0.1154    # main plane lowest point: MEASURED 3.75 in to the wing's lowest edge + 20.1 mm (CAD)
+  main_le_x: -0.895           # ASSUMED; FSAE limit 700 mm ahead of the front tires (-0.903 m)
+  sections:                   # PHOTO spanwise layout, each side (y from the centreline):
+    - {y: [0.0, 0.17], elements: 1}       # under the nose: main plane only
+    - {y: [0.17, 0.50], elements: 3}      # nose to the front tires' inner faces: F1 + F2 + F3
+    - {y: [0.50, 0.6604], elements: 2}    # ahead of the front tires: main plane + first flap, kept low
+  fences:                     # PHOTO orange fences at both ends of the cascade: low at the front, rising over the flaps
+    thickness: 0.006
+    y: [0.17, 0.50]
+    profile: [[-0.900, 0.040], [-0.210, 0.040], [-0.210, 0.365], [-0.330, 0.365], [-0.900, 0.140]]
+  elements:
+    - {section: naca6412, chord: 0.350, angle_deg: 3.0}            # AB44 main element chord 350 mm
+    - {section: naca4412, chord: 0.180, angle_deg: 18.0, gap: 0.013, overlap: 0.015}
+    - {section: naca4412, chord: 0.140, angle_deg: 32.0, gap: 0.012, overlap: 0.013}
+  endplate:                   # PHOTO: low, swept outer endplates ahead of the front tires
+    thickness: 0.006
+    profile: [[-0.900, 0.025], [-0.380, 0.025], [-0.380, 0.215], [-0.470, 0.215], [-0.900, 0.090]]
+
+rear_wing:                    # AB44: 4 elements NACA 9410 / GOE-448 / Ah7476 x2
+  span: 0.8636                # CAD: 34 in between the endplates
+  main_le: [1.200, 0.800]     # PHOTO: stack ~0.80-1.15 m (endplate ~0.70-1.19 m); x ASSUMED (CoP ~3.6 in ahead of the rear axle)
+  elements:
+    - {section: naca9410, chord: 0.475, angle_deg: 5.0}             # AB44 NACA 9410 main element; CAD chord
+    - {section: naca4412, chord: 0.190, angle_deg: 20.0, gap: 0.014, overlap: 0.016}   # flap stack sized to the
+    - {section: naca4412, chord: 0.150, angle_deg: 34.0, gap: 0.013, overlap: 0.014}   # AB12 frontal area and the
+    - {section: naca4412, chord: 0.115, angle_deg: 48.0, gap: 0.012, overlap: 0.012}   # PHOTO stack height
+  endplate: {thickness: 0.006, x: [1.150, 1.980], z: [0.700, 1.190]}   # AB30 ~24 x 18 in; PHOTO height (rule max 1.2 m)
+  struts: {x: [1.42, 1.48], y: 0.16, z: [0.52, 0.86], diameter: 0.025}
+

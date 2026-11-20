@@ -1,0 +1,50 @@
+# Unit, verification and golden tests on every push and pull request.
+# A push to main that passes them also rebuilds the website (branch web/lapsim-site) from this commit:
+# the simulation bundle and the baseline results. GitHub Pages publishes that branch on every commit.
+name: Tests
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: pytest -m "not slow"
+
+  website:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: website
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: main
+      - uses: actions/checkout@v4
+        with:
+          ref: web/lapsim-site
+          path: site
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install numpy scipy pandas pyyaml
+      - run: python site/.github/build.py --lapsim main
+      - name: Commit the rebuilt site
+        working-directory: site
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add assets
+          git diff --cached --quiet && exit 0
+          git commit -m "Rebuild the site from main ${GITHUB_SHA::7}"
+          git pull --rebase origin web/lapsim-site
+          git push origin HEAD:web/lapsim-site
