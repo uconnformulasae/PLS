@@ -1,4 +1,4 @@
-/* Runs the Python lap simulation (fsae_vd / fsae_pt / fsae_ev) in WebAssembly via Pyodide,
+/* Runs the Python lap simulation (the lapsim package) in WebAssembly via Pyodide,
    off the main thread so the page stays responsive. Messages: {zip} once, then {id, fn, args} -> {id, ok, result}. */
 const PYODIDE = "https://cdn.jsdelivr.net/pyodide/v0.27.7/full/";
 const status = (text) => postMessage({ status: text });
@@ -19,7 +19,7 @@ const ready = (async () => {
 import os, sys, json
 os.environ["LAPSIM_HOME"] = "/lapsim"
 sys.path.insert(0, "/lapsim/web/bridge")
-os.chdir("/lapsim/IC")
+os.chdir("/lapsim")
 import lapsim_web
 `);
   status("ready");

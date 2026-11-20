@@ -1,18 +1,19 @@
 # Lap-simulation website
 
 A static website for the CT-17 IC and CT-17 EV predictive lap simulation, built for GitHub Pages.
-It is a second way to use the simulation, next to the notebooks; it changes nothing in `IC/` or `ev/`.
+It is a second way to use the simulation, next to the notebooks and the `lapsim` command; it runs the same
+`lapsim` package and the same car files (`cars/`).
 
 ```bash
-LAPSIM_ROOT=/path/to/fsae_lapsim python web/build.py --serve      # build, then open http://localhost:8000
+python web/build.py --serve      # from the repository root: build, then open http://localhost:8000
 ```
 
 ## How it works
 
 | piece | what it does |
 |---|---|
-| `bridge/lapsim_web.py` | Calls `fsae_vd` / `fsae_pt` / `fsae_ev` and returns JSON: inputs, event results, every lap channel, subsystem data, sweeps. |
-| `build.py` | Zips the simulation packages, configs and track files into `site/py/lapsim.zip`, then runs both cars **from that zip** to write the baseline `site/data/*.json`. |
+| `bridge/lapsim_web.py` | Calls `lapsim` and returns JSON: inputs, event results, every lap channel, subsystem data, sweeps. |
+| `build.py` | Zips `lapsim/`, `cars/`, `tracks/` and the bridge into `site/py/lapsim.zip`, then runs both cars **from that zip** to write the baseline `site/data/*.json`. |
 | `site/` | The website: `index.html`, `assets/app.css`, `assets/app.js`, `assets/editors.js`, `assets/tunnel.js`, `assets/wings.js`, `assets/workbench.js`, `assets/multibody.js`, `assets/worker.js`. This folder is what gets published. |
 
 `site/index.html` also works opened by double-click (no server): `build.py` writes a script copy of every data file
@@ -26,24 +27,19 @@ Rebuild (`python web/build.py`) whenever the model, a config or a track changes,
 
 ## Publishing
 
-This folder is published from this repository by `.github/workflows/pages.yml` whenever `web/site/` changes on `main`.
+This folder is published by GitHub Actions: `.github/workflows/deploy-pages.yml` on every push to the
+`web/lapsim-site` branch, and `.github/workflows/pages.yml` when `web/site/` changes on `main`.
 One-time setup: repository Settings -> Pages -> Source: GitHub Actions, then add the site link to the repository's
 **About -> Website** field. The GitHub mobile app does not show Pages sites itself; it shows the README and opens
 that link in its in-app browser.
 
-The simulation source (`IC/`, `ev/`) lives in the team's `fsae_lapsim` folder, not in this repository. To rebuild:
-
-```bash
-LAPSIM_ROOT=/path/to/fsae_lapsim python web/build.py --serve
-```
-
 ## What is published
 
-Only the files listed in `BUNDLE` in `build.py`: the Python source of `fsae_vd`, `fsae_pt`, `fsae_frame`,
-`fsae_ev`, `fsae_ev_bms`; the car and track-set YAML files; hardpoints, the dyno curve, the frame tube
-list and the 2026 track centre lines. Raw TTC data, logs, CAD and results are never copied.
+Only the files listed in `BUNDLE` in `build.py`: the `lapsim` package, the car files with their data
+(`cars/`: hard points, the dyno curve, the frame tube list) and the track centre lines (`tracks/`).
+Raw TTC data, logs, CAD and results are not in this repository.
 
-**Check before making the site public:** the car configs contain tire coefficients fitted from TTC data
+**Check before making the site public:** the car files contain tire coefficients fitted from TTC data
 (`tires.mu0`, `mu_fz`, ...). The TTC agreement restricts sharing tire data outside the team. A public
 Pages site exposes everything in the bundle to anyone. A private repository with access-controlled Pages
 needs GitHub Enterprise Cloud; Pages from a private repository on other paid plans is still a public site.
@@ -59,7 +55,7 @@ Colours are the variables at the top of `site/assets/app.css`. `--navy` (`#000E2
 `site/assets/editors.js` holds the figures you can drag and the sliders:
 
 * **Frame editor** (Chassis & frame): drag nodes in side / top / front views, add or delete tubes, change each
-  stock size's section, wall and material, or a tube's length. `fsae_frame`'s beam model recomputes mass, CG and
+  stock size's section, wall and material, or a tube's length. The frame's beam model (`lapsim/subsystems/frame.py`) recomputes mass, CG and
   torsional stiffness; the lap simulation gets the new mass and CG (and the frame's twist when that box is ticked).
 * **Hard-point editor** (Suspension): drag any suspension point; the kinematics are re-solved from the edited
   OptimumK export and feed the lap simulation.
@@ -75,16 +71,17 @@ Colours are the variables at the top of `site/assets/app.css`. `--navy` (`#000E2
 * **Aero**: each wing element alone, from a panel method in the bridge (`airfoil()`); real section coordinates can be pasted in.
 
 * **Virtual wind tunnel (2-D)** on the Aero page (`site/assets/tunnel.js`): a lattice-Boltzmann flow solver running in
-  the page on side-view slices built from `configs/ct17_cfd.yaml` (`tunnel_shapes()` in the bridge). Flow patterns and
+  the page on side-view slices built from `cars/ct17_ic/aero_geometry.yaml` (`tunnel_shapes()` in the bridge). Flow patterns and
   the direction of a change only: it is two-dimensional and far below the car's Reynolds number.
 
-* **3-D flow replay** on the Aero page: the saved `fsae_cfd` runs (surface pressure, streamlines, smoke) rotated in the
-  page. `python web/export_cfd.py` turns the runs in `IC/results/cfd/runs/` into `site/data/cfd/*.json`; run it natively
-  (it needs numba and the wing STL files) before `build.py`. These files hold the car's surface mesh.
+* **3-D flow replay** on the Aero page: the saved CFD runs (surface pressure, streamlines, smoke) rotated in the
+  page, from `site/data/cfd/*.json`. These files hold the car's surface mesh. They are pre-computed (see
+  "Pre-computed data" below).
 
-* **Real wing sections**: `python web/export_wings.py` cuts F1 to F3 and R1 to R4 out of the wing CAD (the CAD's fourth front flap, F4, is not on the car and is left out) (shape, chord,
-  angle, where along the span each one runs) into `bridge/wing_sections.json`. The single-element card, the tunnel and
-  the **wing stacks** card (elements solved together in ground effect, `wing_stack()` in the bridge) all use it.
+* **Real wing sections**: `bridge/wing_sections.json` holds F1 to F3 and R1 to R4 cut out of the wing CAD (the CAD's
+  fourth front flap, F4, is not on the car and is left out): shape, chord, angle, where along the span each one runs.
+  The single-element card, the tunnel and the **wing stacks** card (elements solved together in ground effect,
+  `wing_stack()` in the bridge) all use it. It is pre-computed (see "Pre-computed data" below).
 
 Each of these writes an ordinary input override (`geom:frame`, `geom:hardpoints`, `geom:tracks`, or a config key),
 so Export / Import, sweeps and Run simulation all see it. With **Live preview** on, a change re-computes that page's
@@ -103,10 +100,11 @@ subsystem data in the browser (`preview()` in the bridge, no lap); lap times cha
 * **Import & export**: `export_files()` in the bridge writes hard points (OptimumK format, an XYZ list, SolidWorks
   equations), the frame's tubes and joints, and the changed inputs as YAML; the page adds results and wing sections.
   Hard points and frame tubes come back in through `import_hardpoints()` / `import_frame()`.
-* **Optimization**: a logged run exported from RaceStudio as .csv goes through `fsae_vd`'s own cleaning pipeline and the
-  car is simulated on the logged course (`log_import()`); grip and coast-down fits are offered as inputs. Sensitivity,
-  the differential-evolution search with its robustness check, and the trackside-adjustment search are `fsae_vd.optimize`
-  and `fsae_vd.adjust`, run with the full powertrain model (`sensitivity()`, `optimise()`, `trackside()`).
+* **Optimization**: a logged run exported from RaceStudio as .csv goes through the model's own cleaning pipeline
+  (`lapsim/validation/logs.py`) and the car is simulated on the logged course (`log_import()`); grip and coast-down fits
+  are offered as inputs. Sensitivity, the differential-evolution search with its robustness check, and the
+  trackside-adjustment search are `lapsim.studies.optimize` and `lapsim.studies.adjust`, run with the full powertrain
+  model (`sensitivity()`, `optimise()`, `trackside()`).
 * **Wing designer** (`assets/wings.js`): every element to scale where it sits on the car; section, chord, angle,
   position, slot and skin can be changed, and the endplates' size and material. It feeds the 2-D tunnel directly and
   the lap simulation only through "Use this wing in the full car simulation".
@@ -115,22 +113,26 @@ subsystem data in the browser (`preview()` in the bridge, no lap); lap times cha
 
 The **Multibody** page (`site/assets/multibody.js`) shows the car as a multibody system, in two parts:
 
-* **Minimum-lap-time solve** (`fsae_vd.mb_study`: lumped-axle chassis, optimal control, CasADi + IPOPT): the racing
-  line, speed, steering, drive and brake from one optimisation, graded A to F with the checks behind the grade, next to
-  the quasi-steady lap and the logged runs. IPOPT is not in the browser build of CasADi, so these are computed natively
-  for the baseline car and published as `site/data/mb/<car>.json`:
-
-  ```bash
-  LAPSIM_ROOT=/path/to/fsae_lapsim python web/export_mb.py                     # IC: acceleration, skidpad, autocross
-  LAPSIM_ROOT=/path/to/fsae_lapsim python web/export_mb.py --events endurance  # add one event (others are kept)
-  ```
-
-  Then run `build.py`. Acceleration and skidpad take seconds, the autocross about 3 minutes, an endurance lap about 45. The study is built on
-  the IC powertrain model (`fsae_pt`), so the EV car has no minimum-lap-time run yet.
-* **Transient check** (`fsae_vd.multibody`: pitch, roll, heave, yaw and tire lag, RK4 at 2 ms, plain NumPy): the car
-  driven in the time domain along the quasi-steady speed profile. `build.py` writes the baseline
+* **Minimum-lap-time solve** (lumped-axle chassis, optimal control, CasADi + IPOPT): the racing line, speed, steering,
+  drive and brake from one optimisation, graded A to F with the checks behind the grade, next to the quasi-steady lap
+  and the logged runs. IPOPT is not in the browser build of CasADi, so these are pre-computed for the baseline IC car
+  (`site/data/mb/ic.json`, see "Pre-computed data"). The EV car has no minimum-lap-time run yet.
+* **Transient check** (`lapsim/solvers/transient.py`: pitch, roll, heave, yaw and tire lag, RK4 at 2 ms, plain NumPy):
+  the car driven in the time domain along the quasi-steady speed profile. `build.py` writes the baseline
   (`site/data/mb/transient_<car>.json`); **Run transient check** runs it in the browser on the car with the inputs as
   they stand (`transient()` in the bridge), both cars, about 20 s.
+
+## Pre-computed data
+
+Three parts of the site come from tools that need software or files this repository does not hold (CasADi with
+IPOPT, the CFD solver, the CAD). Their output is committed here and `build.py` only copies it; the tools
+(`export_mb.py`, `export_cfd.py`, `export_wings.py`) live in the team's research folder, `fsae_lapsim/web/`:
+
+| file | what | tool |
+|---|---|---|
+| `site/data/mb/ic.json` | minimum-lap-time runs of the IC car | `export_mb.py` (CasADi + IPOPT) |
+| `site/data/cfd/*.json` | 3-D CFD flow replay | `export_cfd.py` (the CFD solver, numba, wing STL files) |
+| `bridge/wing_sections.json` | wing sections cut from the CAD | `export_wings.py` (the CFD geometry tools, wing STL files) |
 
 ## Adding a visual
 
@@ -146,6 +148,6 @@ return it from `run()` in `bridge/lapsim_web.py`.
 ## Limits
 
 * Multibody optimal control (CasADi / IPOPT) and the CFD solver (Numba) do not run in a browser: both are pre-computed
-  natively (`export_mb.py`, `export_cfd.py`).
-* `.xrk` log reading and fitting from logs or TTC data are not on the site.
+  (see "Pre-computed data").
+* `.xrk` logs: export the session to .csv from RaceStudio. Fitting tires from TTC data is not on the site.
 * First run downloads about 40 MB (cached after). Needs a browser with WebAssembly: current Safari, Chrome, Firefox.

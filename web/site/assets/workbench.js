@@ -62,7 +62,7 @@ V("overview", "compare", "This car against the baseline", "Every event, for the 
    commit made with the GitHub API using the publisher's own access token, so GitHub decides who may do it (people
    with write access to the repository), and every save is in the repository's history with a name on it. */
 const TEAM = {
-  repo: "uconnformulasae/Predictive-Lap-Simulator-IC-EV-", branch: "web/lapsim-site", dir: "web/site/data/team",
+  repo: "uconnformulasae/PLS", branch: "web/lapsim-site", dir: "web/site/data/team",
   index: null, user: null, canPush: false, adoptedLoaded: {},
   token() { return sessionStorage.getItem("lapsim.gh") || localStorage.getItem("lapsim.gh") || ""; },
   empty: () => ({ drivers: null, corners: [], designs: [], adopted: {}, log: [] }),

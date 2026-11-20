@@ -4,8 +4,8 @@ The website (web/site) runs this file two ways:
 
 * ``python web/build.py`` runs it natively to write the baseline results the page shows on load;
 * in the browser it runs inside Pyodide (Python compiled to WebAssembly) so a visitor can change
-  any input and re-run the real simulation - the same ``fsae_vd`` / ``fsae_pt`` / ``fsae_ev`` code
-  as the notebooks, not a copy of it.
+  any input and re-run the real simulation - the same ``lapsim`` package as the notebooks and the
+  ``lapsim`` command, not a copy of it.
 
 Everything returned is plain JSON: numbers, strings, lists, dicts (NaN -> null).
 
@@ -27,11 +27,11 @@ import types
 import warnings
 from pathlib import Path
 
-HOME = Path(os.environ.get("LAPSIM_HOME") or Path(__file__).resolve().parents[2])
-IC, EV = HOME / "IC", HOME / "ev"
-for _p in (IC, EV, EV / "fsae_ev_bms"):
-    if str(_p) not in sys.path:
-        sys.path.insert(0, str(_p))
+HOME = Path(os.environ.get("LAPSIM_HOME") or Path(__file__).resolve().parents[2])     # the repository root
+if str(HOME) not in sys.path:
+    sys.path.insert(0, str(HOME))
+CARS = {"ic": "ct17_ic", "ev": "ct17_ev"}          # cars/<name>/vehicle.yaml
+IC_DIR = HOME / "cars" / CARS["ic"]
 
 MAX_POINTS = 900          # points per lap trace sent to the page
 EVENTS = ("acceleration", "skidpad", "autocross", "endurance")
@@ -217,25 +217,24 @@ def _walk(obj, prefix, rows, meta=None):
 
 def _load(car, overrides=None):
     """The car's config objects, with the overrides applied: {'vehicle': cfg, 'pt' | 'ev': ..., 'pack': ...}."""
+    import lapsim
     car = car.lower()
-    if car == "ic":
-        import fsae_pt as pt
-        import fsae_vd as vd
-        from fsae_vd.track_sets import load_track_set
-        cfg = vd.load_config(str(IC / "configs" / "ct17_baseline.yaml"))
-        ptc = pt.load_pt_config(str(IC / "configs" / "ct17_powertrain.yaml"))
-        load_track_set("ic_2026", root=IC).apply(cfg)
-        objs = {"vehicle": cfg, "pt": ptc}
-    elif car == "ev":
-        import fsae_ev as ev
-        cfg, evc, bcfg, status = ev.load_car()
-        objs = {"vehicle": cfg, "ev": evc, "pack": bcfg, "_status": status}
-    else:
+    if car not in CARS:
         raise ValueError(f"car must be 'ic' or 'ev', not {car!r}")
+    c = lapsim.load_car(CARS[car])
+    objs = c.objects()
+    if car == "ev":
+        objs["_status"] = c.status()
+    cfg = objs["vehicle"]
     ov = dict(overrides or {})
+    skipped = []
     for k, v in ov.items():
         if not k.startswith("geom:"):
-            _set(objs, k, v)
+            try:
+                _set(objs, k, v)
+            except (AttributeError, KeyError):          # an input this version no longer has (an older saved design)
+                skipped.append(k)
+    objs["_skipped"] = skipped
     if ov.get("geom:tracks"):
         _apply_tracks(cfg, ov["geom:tracks"])
     if ov.get("geom:hardpoints"):
@@ -245,9 +244,27 @@ def _load(car, overrides=None):
     return objs
 
 
+def _vehicle(car, objs):
+    """The vehicle model of a car's config objects (ICVehicle / EVVehicle)."""
+    if car == "ic":
+        from lapsim.subsystems.power.ic import ICVehicle
+        return ICVehicle(objs["vehicle"], objs["pt"])
+    from lapsim.subsystems.power.ev import EVVehicle
+    return EVVehicle(objs["vehicle"], objs["ev"], objs["pack"])
+
+
+def _run_events(car, objs, events):
+    """The four events (or some) with the car's QSS solver."""
+    if car == "ic":
+        from lapsim.solvers import qss_ic
+        return qss_ic.run_events(objs["vehicle"], objs["pt"], events=tuple(events))
+    from lapsim.solvers import qss_ev
+    return qss_ev.run_events(objs["vehicle"], objs["ev"], objs["pack"], events=tuple(events))
+
+
 def _set(objs, key, value):
     """key = '<object>:<dotted.path>', value = a number in SI or a string with units ('350 lbf/in')."""
-    from fsae_vd.units import parse_quantity
+    from lapsim.config.units import parse_quantity
     which, _, path = key.partition(":")
     obj = objs[which]
     *parents, leaf = path.split(".")
@@ -357,10 +374,11 @@ def _aero(veh):
 
 
 def _suspension(veh):
-    from fsae_vd import hardpoints, reports
+    from lapsim.subsystems import hardpoints
+    from lapsim.subsystems.suspension import design_report
     veh.pt.unlimited = True          # tire-limited, as traction_ggv does: same numbers, without the engine look-ups
     try:
-        axle, car = reports.design_report(veh)
+        axle, car = design_report(veh)
     finally:
         veh.pt.unlimited = False
     out = {"axles": _table(axle.rename_axis("quantity")), "car": _j(car)}
@@ -382,7 +400,7 @@ def _suspension(veh):
 
 
 def _brakes(veh):
-    from fsae_vd import brakes
+    from lapsim.subsystems import brakes
     g = np.round(np.arange(0.2, 2.01, 0.2), 2)
     return {"balance": _table(pd.DataFrame(brakes.balance_table(veh, decel_g=tuple(g))), index=False),
             "hardware": _j(brakes.hardware_summary(veh.cfg))}
@@ -401,11 +419,11 @@ def _ic_powertrain(veh, T):
 
 
 def _ev_powertrain(veh, T):
-    import fsae_ev as ev
+    from lapsim.subsystems.power.ev import CODES
     ep = T.ep
     idx = _pick(len(T.v), 300)
     code = np.asarray(T.code)[idx]
-    names = [ev.CODES[int(c)] if np.issubdtype(code.dtype, np.integer) and 0 <= int(c) < len(ev.CODES) else str(c) for c in code]
+    names = [CODES[int(c)] if np.issubdtype(code.dtype, np.integer) and 0 <= int(c) < len(CODES) else str(c) for c in code]
     m = ep.motor
     rg = np.linspace(100, ep.evc.motor.max_rpm, 40)
     tg = np.linspace(1, float(np.nanmax(T.T)), 30)
@@ -427,18 +445,18 @@ def run(car, overrides=None, events=None, detail=True):
     objs = _load(car, overrides)
     cfg = objs["vehicle"]
     if car == "ic":
-        import fsae_pt as pt
-        res = pt.run_events_pt(cfg, objs["pt"], events=events)
-        limits, colors = list(pt.LIMITS), dict(pt.LIMIT_COLORS)
+        from lapsim.solvers import qss_ic as qs
     else:
-        import fsae_ev as ev
-        res = ev.run_events_ev(cfg, objs["ev"], objs["pack"], events=events)
-        limits, colors = list(ev.LIMITS), dict(ev.LIMIT_COLORS)
+        from lapsim.solvers import qss_ev as qs
+    res = _run_events(car, objs, events)
+    limits, colors = list(qs.LIMITS), dict(qs.LIMIT_COLORS)
     veh = res.vehicle
     out = {"car": car, "name": str(getattr(cfg, "name", car)),
            "events": {e: {"time_s": _num(res.times.get(e), 6), "points": _num(res.points.get(e), 5)}
                       for e in (*EVENTS, "efficiency") if e in res.times or e in res.points},
-           "notes": [str(n) for n in res.notes], "limits": limits, "limit_colors": colors,
+           "notes": [str(n) for n in res.notes] + [f"input {k} is not in this version of the model - ignored"
+                                                   for k in objs["_skipped"]],
+           "limits": limits, "limit_colors": colors,
            "mass_kg": _num(veh.m), "overrides": _j(overrides or {})}
     laps = {}
     for e in EVENTS:
@@ -464,14 +482,14 @@ def run(car, overrides=None, events=None, detail=True):
                 _safe(sub, f"brake_temps_{e}", lambda e=e, n=n: _brake_temps(veh, res.laps[e], n))
         _safe(sub, "powertrain", lambda: _ic_powertrain(veh, res.tables) if car == "ic" else _ev_powertrain(veh, res.tables))
         if car == "ev":
-            import fsae_ev as ev
+            from lapsim.config.register import status_counts
             for e in ("autocross", "endurance"):
                 if e in res.laps:
-                    _safe(sub, f"energy_{e}", lambda e=e: _j(ev.energy_breakdown(res.laps[e])))
+                    _safe(sub, f"energy_{e}", lambda e=e: _j(qs.energy_breakdown(res.laps[e])))
             st = objs["_status"]
             sub["status"] = _table(st[~st["status"].str.startswith("ASSUMED")], index=False)
-            sub["status_counts"] = _j(ev.status_counts(st))
-            sub["limit_help"] = _j(ev.LIMIT_HELP)
+            sub["status_counts"] = _j(status_counts(st))
+            sub["limit_help"] = _j(qs.LIMIT_HELP)
         out["subsystems"] = sub
     out["solve_s"] = _num(time.time() - t_start, 3)
     return out
@@ -497,23 +515,24 @@ def sweep(car, key, values, events=("acceleration", "skidpad", "autocross"), ove
 
 def ev_studies(overrides=None, power_limits=(80, 70, 60, 50, 40, 30)):
     """The two EV studies: endurance against the accumulator power limit, and events against the reduction ratio."""
-    import fsae_ev as ev
+    from lapsim.solvers import qss_ev
+    from lapsim.solvers.qss import make_tracks
     objs = _load("ev", overrides)
     cfg, evc, bcfg = objs["vehicle"], objs["ev"], objs["pack"]
-    veh = ev.EVVehicle(cfg, evc, bcfg)
+    veh = _vehicle("ev", objs)
     tggv = veh.traction_ggv()
-    tracks = ev.make_tracks(cfg, cfg.sim.ds)
+    tracks = make_tracks(cfg, cfg.sim.ds)
     out = {}
     if "endurance" in tracks:
-        _safe(out, "energy_sweep", lambda: _table(ev.energy_sweep(veh, tggv, tracks["endurance"], power_limits,
-                                                                    cfg.events.endurance_distance, cfg.events.tmin_endurance)))
-    _safe(out, "gearing_sweep", lambda: _table(ev.gearing_sweep(cfg, evc, bcfg, tggv, tracks)))
+        _safe(out, "energy_sweep", lambda: _table(qss_ev.energy_sweep(veh, tggv, tracks["endurance"], power_limits,
+                                                                        cfg.events.endurance_distance, cfg.events.tmin_endurance)))
+    _safe(out, "gearing_sweep", lambda: _table(qss_ev.gearing_sweep(cfg, evc, bcfg, tggv, tracks)))
     return out
 
 
 def tracks(car="ic"):
     """Centre lines of the event tracks (for the track page)."""
-    from fsae_vd.track import load_track
+    from lapsim.core.track import load_track
     cfg = _load(car)["vehicle"]
     out = {}
     for e in ("autocross", "endurance"):
@@ -527,15 +546,11 @@ def tracks(car="ic"):
 
 
 # --------------------------------------------------------------------------- tracks
-TRACK_DIRS = ("data/tracks/ic_tracks2026", "data/tracks")
-
-
 def track_files():
-    """Track centre lines in the bundle: {file name: path}."""
+    """Track centre lines in the bundle (tracks/<set>/*.csv): {file name: path}."""
     out = {}
-    for d in TRACK_DIRS:
-        for f in sorted((IC / d).glob("*.csv")):
-            out.setdefault(f.name, f)
+    for f in sorted((HOME / "tracks").rglob("*.csv")):
+        out.setdefault(f.name, f)
     return out
 
 
@@ -571,15 +586,14 @@ _BASE_HP = {}
 def _hp_file(which):
     """The baseline hard-point file of an axle (never an edited copy)."""
     if which not in _BASE_HP:
-        import fsae_vd as vd
-        cfg = vd.load_config(str(IC / "configs" / "ct17_baseline.yaml"))
-        _BASE_HP[which] = getattr(cfg, which).hardpoint_file
+        import lapsim
+        _BASE_HP[which] = getattr(lapsim.load_car(CARS["ic"]).vehicle, which).hardpoint_file
     return _BASE_HP[which]
 
 
 def hardpoints():
     """Baseline hard points of both axles (left corner; export axes: x forward, y left, z up; metres)."""
-    from fsae_vd import hardpoints as hp
+    from lapsim.subsystems import hardpoints as hp
     out = {"links": [list(l) for l in HP_LINKS], "names": HP_NAMES}
     for which in ("front", "rear"):
         f = _hp_file(which)
@@ -627,14 +641,14 @@ MATERIALS = {
     "6061-T6 aluminium": {"E": 68.9e9, "G": 26e9, "density": 2700.0},
     "Ti-3Al-2.5V titanium": {"E": 100e9, "G": 40e9, "density": 4480.0},
 }
-FRAME_TOL = 0.022          # ends this close are one welded node (as in fsae_frame.FrameModel)
+FRAME_TOL = 0.022          # ends this close are one welded node (as in subsystems.frame.FrameModel)
 _FRAME = {}
 
 
 def _frame_tubes():
     if "tubes" not in _FRAME:
-        from fsae_frame import model, tubes
-        _FRAME["tubes"] = model.to_car(tubes.load_tubes(IC / "data" / "frame" / "ct17_spaceframe_tubes.csv"))
+        from lapsim.subsystems import frame
+        _FRAME["tubes"] = frame.to_car(frame.load_tubes(IC_DIR / "frame_tubes.csv"))
     return _FRAME["tubes"]
 
 
@@ -712,7 +726,7 @@ def frame_geometry():
 
 def _frame_build(state):
     """Tube list + per-tube material from an editable frame state (frame_geometry() format)."""
-    from fsae_frame.tubes import Tube
+    from lapsim.subsystems.frame import Tube
     nodes = np.array(state["nodes"], float)
     rows = state["tubes"]
     P = [[None, None] for _ in rows]
@@ -749,7 +763,7 @@ def _frame_build(state):
 
 def _frame_props(state, pickups):
     """Mass, CG, torsional stiffness and per-tube strain-energy share of a frame state."""
-    from fsae_frame import model
+    from lapsim.subsystems import frame as model
     tubes, mats = _frame_build(state)
     lib = dict(MATERIALS)
     lib.update(state.get("materials") or {})
@@ -786,23 +800,23 @@ def _frame_props(state, pickups):
 
 
 def _pickups(cfg):
-    from fsae_frame import model
-    return model.load_pickups(cfg.front.hardpoint_file, cfg.rear.hardpoint_file)
+    from lapsim.subsystems.frame import load_pickups
+    return load_pickups(cfg.front.hardpoint_file, cfg.rear.hardpoint_file)
 
 
 def _frame_base(cfg=None):
     if "base" not in _FRAME:
-        import fsae_vd as vd
-        base_cfg = vd.load_config(str(IC / "configs" / "ct17_baseline.yaml"))
+        import lapsim
+        base_cfg = lapsim.load_car(CARS["ic"]).vehicle
         _FRAME["base"] = _frame_props(frame_geometry(), _pickups(base_cfg))
     return _FRAME["base"]
 
 
 def _apply_frame(cfg, state):
     """The car with the edited frame in place of the baseline one: mass, CG and (when asked) torsional stiffness."""
-    from fsae_frame import lapsim as FL
+    from lapsim.subsystems.frame import swap_frame
     base, new = _frame_base(), _frame_props(state, _pickups(cfg))
-    c = FL.swap_frame(cfg, base, new)
+    c = swap_frame(cfg, base, new)
     if state.get("use_stiffness") and "k_per_rad" in new:
         c.mass.chassis_torsional_stiffness = new["k_per_rad"]
     return c
@@ -810,9 +824,8 @@ def _apply_frame(cfg, state):
 
 def frame_eval(state=None, cfg=None):
     """Numbers and drawing data for a frame state (None = the baseline frame)."""
-    import fsae_vd as vd
-    from fsae_frame import lapsim as FL
-    cfg = cfg or vd.load_config(str(IC / "configs" / "ct17_baseline.yaml"))
+    import lapsim
+    cfg = cfg or lapsim.load_car(CARS["ic"]).vehicle
     base = _frame_base()
     st = state or frame_geometry()
     new = _frame_props(st, _pickups(cfg)) if state else base
@@ -872,12 +885,7 @@ def preview(car, overrides=None, blocks=PREVIEW_BLOCKS):
     car = car.lower()
     objs = _load(car, overrides)
     cfg = objs["vehicle"]
-    if car == "ic":
-        import fsae_pt as pt
-        veh = pt.PTVehicle(cfg, objs["pt"])
-    else:
-        import fsae_ev as ev
-        veh = ev.EVVehicle(cfg, objs["ev"], objs["pack"])
+    veh = _vehicle(car, objs)
     out = {}
     for b in blocks:
         if b == "aero":
@@ -892,8 +900,8 @@ def preview(car, overrides=None, blocks=PREVIEW_BLOCKS):
             _safe(out, b, lambda: _ggv(veh.traction_ggv()))
         elif b == "powertrain":
             if car == "ic":
-                import fsae_pt as pt
-                _safe(out, b, lambda: _ic_powertrain(veh, pt.PTTables(veh)))
+                from lapsim.solvers.qss_ic import ICTables
+                _safe(out, b, lambda: _ic_powertrain(veh, ICTables(veh)))
             else:
                 _safe(out, b, lambda: _ev_powertrain(veh, veh.tables0))
     return {"car": car, "blocks": out, "mass_kg": _num(veh.m), "notes": [str(n) for n in veh.warnings], "solve_s": _num(time.time() - t0, 3)}
@@ -903,7 +911,7 @@ def preview(car, overrides=None, blocks=PREVIEW_BLOCKS):
 def _brake_powers(veh, v, ax, braking):
     """Friction power at ONE front and ONE rear brake along a lap [W]: the line pressure that gives each
     braking point's deceleration (drag helps), times wheel speed."""
-    from fsae_vd import brakes
+    from lapsim.subsystems import brakes
     v = np.asarray(v, float)
     g = np.where(braking, np.clip(-np.asarray(ax, float) / 9.80665, 0.0, None), 0.0)
     gg, vg = np.linspace(0.0, max(2.5, float(g.max()) + 0.1), 14), np.linspace(0.0, max(40.0, float(v.max())), 7)
@@ -915,8 +923,8 @@ def _brake_powers(veh, v, ax, braking):
 
 
 def _brake_temps(veh, lr, laps=1, T_air=25.0):
-    """Rotor temperatures over ``laps`` repeats of one simulated lap (lumped rotor model, fsae_vd.brakes)."""
-    from fsae_vd import brakes
+    """Rotor temperatures over ``laps`` repeats of one simulated lap (lumped rotor model, subsystems.brakes)."""
+    from lapsim.subsystems import brakes
     front, rear = brakes.rotors(veh.cfg)
     lim = np.asarray(lr.limit)
     braking = (lim == "braking") if lim.dtype.kind in "OUS" else (np.asarray(lr.ax) < -0.5)
@@ -941,14 +949,9 @@ def _brake_temps(veh, lr, laps=1, T_air=25.0):
 
 def brake_stops(car, overrides=None, v_hi_kph=100.0, v_lo_kph=30.0, n=15, decel_g=1.4, accel_g=0.6):
     """Rotor temperatures over repeated identical stops (fade / sizing check)."""
-    from fsae_vd import brakes
+    from lapsim.subsystems import brakes
     objs = _load(car, overrides)
-    if car == "ic":
-        import fsae_pt as pt
-        veh = pt.PTVehicle(objs["vehicle"], objs["pt"])
-    else:
-        import fsae_ev as ev
-        veh = ev.EVVehicle(objs["vehicle"], objs["ev"], objs["pack"])
+    veh = _vehicle(car, objs)
     df, peaks = brakes.repeated_stops(veh, v_hi_kph / 3.6, v_lo_kph / 3.6, int(n), float(decel_g), float(accel_g))
     idx = _pick(len(df), 1400)
     ef, er = brakes.stop_energy(veh, v_hi_kph / 3.6, v_lo_kph / 3.6)
@@ -1083,7 +1086,7 @@ def wing_sections():
 
 def wing_elements():
     """Every wing element: [{name, wing, source, section, chord, angle_deg, thickness_pct, camber_pct, y, span, unit}].
-    From the CAD cut when it is in the bundle (the real sections), else the NACA stand-ins in configs/ct17_cfd.yaml."""
+    From the CAD cut when it is in the bundle (the real sections), else the NACA stand-ins in cars/ct17_ic/aero_geometry.yaml."""
     cad = wing_sections()
     if cad:
         return [{"name": e["name"], "wing": e["wing"], "source": "cad", "section": "section cut from the CAD", "chord": e["chord"], "angle_deg": e["angle_deg"],
@@ -1091,7 +1094,7 @@ def wing_elements():
                  "inverted": e.get("inverted", True), "le": _j(np.array(e["poly"])[np.argmax(np.linalg.norm(np.array(e["poly"]) - np.array(e["poly"][0]), axis=1))], 6),
                  "described": True} for e in cad["elements"] if e["name"] in DESCRIBED]
     import yaml
-    f = IC / "configs" / "ct17_cfd.yaml"
+    f = IC_DIR / "aero_geometry.yaml"
     y = yaml.safe_load(f.read_text()) or {}
     out = []
     for wing in ("front_wing", "rear_wing"):
@@ -1249,7 +1252,7 @@ def wing_zones():
 # --------------------------------------------------------------------------- side-view outlines for the 2-D wind tunnel
 def _place(section, chord, angle_deg, le):
     """A unit section as it sits on the car (x rearward, z up): inverted (suction side down), scaled, pitched
-    trailing-edge-up by ``angle_deg`` and moved to its leading edge ``le``. As fsae_cfd.geometry.airfoils.place_element."""
+    trailing-edge-up by ``angle_deg`` and moved to its leading edge ``le`` (as the CFD tool places its elements)."""
     p = _naca4(section, 48).copy()
     p[:, 1] *= -1.0
     p *= chord
@@ -1258,10 +1261,10 @@ def _place(section, chord, angle_deg, le):
 
 
 def tunnel_shapes():
-    """Side-view outlines from configs/ct17_cfd.yaml, in metres (x rearward from the front axle, z up from the ground):
+    """Side-view outlines from cars/ct17_ic/aero_geometry.yaml, in metres (x rearward from the front axle, z up from the ground):
     each wing's elements, the body's centre-line silhouette, the driver's helmet and the wheels."""
     import yaml
-    y = yaml.safe_load((IC / "configs" / "ct17_cfd.yaml").read_text()) or {}
+    y = yaml.safe_load((IC_DIR / "aero_geometry.yaml").read_text()) or {}
     out = {"elements": {}, "le": {}, "names": {}}
     cad = wing_sections()
     for wing in ("front_wing", "rear_wing"):
@@ -1309,12 +1312,10 @@ def tunnel_shapes():
 def _car_and_runner(car, overrides):
     """(objs, vehicle, run(cfg, events) -> event results) for a car with the overrides applied."""
     objs = _load(car, overrides)
-    cfg = objs["vehicle"]
-    if car == "ic":
-        import fsae_pt as pt
-        return objs, pt.PTVehicle(cfg, objs["pt"]), (lambda c, events: pt.run_events_pt(c, objs["pt"], events=tuple(events)))
-    import fsae_ev as ev
-    return objs, ev.EVVehicle(cfg, objs["ev"], objs["pack"]), (lambda c, events: ev.run_events_ev(c, objs["ev"], objs["pack"], events=tuple(events)))
+
+    def runner(cfg, events):
+        return _run_events(car, {**objs, "vehicle": cfg}, events)
+    return objs, _vehicle(car, objs), runner
 
 
 def export_files(car, overrides=None):
@@ -1327,7 +1328,7 @@ def export_files(car, overrides=None):
     frame_joints.csv                 the frame's joints in car axes, mm
     inputs_changed.yaml              the changed inputs, grouped by config file, ready to paste into the YAML files
     """
-    from fsae_vd import hardpoints as hp
+    from lapsim.subsystems import hardpoints as hp
     ov = dict(overrides or {})
     objs = _load(car, ov)
     cfg = objs["vehicle"]
@@ -1350,7 +1351,7 @@ def export_files(car, overrides=None):
     out["hardpoints_xyz.csv"] = "\n".join(rows) + "\n"
     out["solidworks_equations.txt"] = "\n".join(eqs) + "\n"
     try:
-        from fsae_frame import model
+        from lapsim.subsystems import frame as model
         st = ov.get("geom:frame") or frame_geometry()
         tubes, _ = _frame_build(st)
         R = model.CAD_AXES                                   # car <- frame CAD; its transpose goes back
@@ -1363,15 +1364,14 @@ def export_files(car, overrides=None):
         out["frame_joints.csv"] = "joint,x_mm,y_mm,z_mm\n" + "".join(f"{i + 1},{1e3 * p[0]:.2f},{1e3 * p[1]:.2f},{1e3 * p[2]:.2f}\n" for i, p in enumerate(st["nodes"]))
     except Exception as e:  # noqa: BLE001
         out["frame_tubes.csv"] = f"# frame export failed: {e}\n"
-    files = {"vehicle": "ct17_baseline.yaml" if car == "ic" else "ct17ev_vehicle.yaml", "pt": "ct17_powertrain.yaml",
-             "ev": "ct17ev_powertrain.yaml", "pack": "ev_accumulator.yaml"}
+    sections = {"vehicle": "vehicle", "pt": "powertrain", "ev": "powertrain", "pack": "pack"}
     by = {}
     for k, v in ov.items():
         which, _, path = k.partition(":")
-        if which in files:
-            by.setdefault(files[which], []).append((path, v))
+        if which in sections:
+            by.setdefault(sections[which], []).append((path, v))
     y = ["# Inputs changed on the lap-simulation website (values in SI unless a unit is written).",
-         "# Paste each value at its dotted path in the named config file."]
+         f"# Paste each value at its dotted path under the named section of cars/{CARS[car]}/vehicle.yaml."]
     for f, items in by.items():
         y.append(f"\n{f}:")
         for path, v in sorted(items):
@@ -1388,7 +1388,7 @@ def import_hardpoints(text):
     """Suspension points from an OptimumK export, or from this site's hardpoints_xyz.csv -> {axle: {point: [x, y, z] m}}.
     An OptimumK file holds one axle: it is reported under 'axle' = None and the page asks which one it is."""
     import tempfile
-    from fsae_vd import hardpoints as hp
+    from lapsim.subsystems import hardpoints as hp
     lines = [ln for ln in str(text).splitlines() if ln.strip()]
     if lines and lines[0].lower().replace(" ", "").startswith("point,description,side"):
         out = {"front": {}, "rear": {}}
@@ -1414,10 +1414,10 @@ def import_frame(text):
     """A frame tube list (x0,y0,z0,x1,y1,z1,od,wall,shape,bend,member in the frame CAD's axes, metres) -> an
     editable frame state for the frame editor."""
     import tempfile
-    from fsae_frame import model, tubes
+    from lapsim.subsystems import frame
     f = Path(tempfile.gettempdir()) / "lapsim_import_frame.csv"
     f.write_text(str(text))
-    tb = model.to_car(tubes.load_tubes(f))
+    tb = frame.to_car(frame.load_tubes(f))
     if len(tb) < 3:
         raise ValueError("fewer than three tubes found: expected the columns x0,y0,z0,x1,y1,z1,od,wall,shape,bend,member")
     keep = dict(_FRAME)
@@ -1436,13 +1436,12 @@ def log_import(car, text, overrides=None):
     """A logged run (RaceStudio / AiM .csv export, or a plain .csv with a time column) cleaned with the model's
     own pipeline and set against the prediction: the car simulated on the course the log was driven on."""
     import tempfile
-    import fsae_vd as vd
-    from fsae_vd import identification as idn
-    from fsae_vd import track as trk
+    from lapsim.core import track as trk
+    from lapsim.validation import logs as idn
     f = Path(tempfile.gettempdir()) / "lapsim_import_log.csv"
     f.write_text(str(text))
-    log = vd.load_log(str(f))
-    pl = vd.process_log(log)
+    log = idn.load_log(str(f))
+    pl = idn.process_log(log)
     d = pl.df
     out = {"meta": {k: str(v) for k, v in (log.meta or {}).items() if k.lower() in ("session", "vehicle", "racer", "track", "date", "comment", "duration")},
            "channels": sorted(log.channels), "duration_s": _num(float(d["t"].iloc[-1] - d["t"].iloc[0])),
@@ -1473,11 +1472,11 @@ def log_import(car, text, overrides=None):
         flying = float(L["v"].iloc[0]) > 3.0
         tg = veh.traction_ggv()
         if car == "ic":
-            import fsae_pt as pt
-            r = pt.solve_pt(tr, veh, tg, pt.PTTables(veh), v0=None if flying else 0.0, flying=flying)
+            from lapsim.solvers import qss_ic
+            r = qss_ic.solve(tr, veh, tg, qss_ic.ICTables(veh), v0=None if flying else 0.0, flying=flying)
         else:
-            import fsae_ev as ev
-            r = ev.solve_ev(tr, veh, tg, veh.tables0, v0=None if flying else 0.0, flying=flying)
+            from lapsim.solvers import qss_ev
+            r = qss_ev.solve(tr, veh, tg, veh.tables0, v0=None if flying else 0.0, flying=flying)
         pi = _pick(len(r.s), 1200)
         pred = {"time_s": _num(r.time, 6), "s": _j(np.asarray(r.s)[pi]), "v": _j(np.asarray(r.v)[pi], 4), "ax": _j(np.asarray(r.ax)[pi], 4),
                 "ay": _j(np.asarray(r.ay)[pi], 4), "x": _j(np.asarray(tr.x)[pi]) if tr.x is not None else None,
@@ -1517,12 +1516,12 @@ def log_import(car, text, overrides=None):
     except Exception as e:  # noqa: BLE001
         cal["coastdown"] = {"error": f"{type(e).__name__}: {e}"}
     out["calibration"] = cal
-    qc = vd.qc_table(pl)
+    qc = idn.qc_table(pl)
     out["qc"] = _table(qc.head(40), index=True) if qc is not None and len(qc) else None
     return out
 
 
-# --------------------------------------------------------------------------- optimisation (fsae_vd.optimize / adjust)
+# --------------------------------------------------------------------------- optimisation (lapsim.studies)
 def _progress(text):
     """Tell the page what a long job is doing (in the browser's worker; a no-op elsewhere)."""
     try:
@@ -1533,33 +1532,21 @@ def _progress(text):
         pass
 
 
-class _full_car_events:
-    """Make fsae_vd.optimize / adjust score cars with the full powertrain model (fsae_pt or fsae_ev) instead of the
-    vehicle-dynamics-only runner they import, so their sensitivity, optimiser and trackside tools work on this car."""
+class _Counted:
+    """A study runner that counts its simulations and reports progress to the page every fourth one."""
 
     def __init__(self, runner, label=None):
         self.runner, self.label, self.n = runner, label, 0
 
-    def __enter__(self):
-        from fsae_vd import adjust, optimize
-        self.mods, self.old = (optimize, adjust), (optimize.run_events, adjust.run_events)
-
-        def run_events(cfg, tracks=None, ggv=None, events=EVENTS, **kw):
-            self.n += 1
-            if self.label and self.n % 4 == 0:
-                _progress(f"{self.label}: {self.n} simulations so far…")
-            return self.runner(cfg, events)
-        for m in self.mods:
-            m.run_events = run_events
-        return self
-
-    def __exit__(self, *a):
-        for m, old in zip(self.mods, self.old):
-            m.run_events = old
+    def __call__(self, cfg, events):
+        self.n += 1
+        if self.label and self.n % 4 == 0:
+            _progress(f"{self.label}: {self.n} simulations so far…")
+        return self.runner(cfg, events)
 
 
 def _params(cfg, keys, span=0.2):
-    from fsae_vd.optimize import Param
+    from lapsim.studies.optimize import Param
     out = []
     for k in keys:
         path = k.split(":", 1)[1] if ":" in k else k
@@ -1572,28 +1559,28 @@ def _params(cfg, keys, span=0.2):
 
 
 def sensitivity(car, keys, overrides=None, events=("acceleration", "skidpad", "autocross")):
-    """fsae_vd.optimize.sensitivity on the full car: what a +/-5 % step in each input does to every event and to the
-    score. Vehicle inputs only ('vehicle:<path>')."""
-    from fsae_vd import optimize
+    """lapsim.studies.optimize.sensitivity on the full car: what a +/-5 % step in each input does to every event and
+    to the score. Vehicle inputs only ('vehicle:<path>')."""
+    from lapsim.studies import optimize
     objs, veh, runner = _car_and_runner(car, overrides)
     cfg = objs["vehicle"]
     P = _params(cfg, keys)
-    with _full_car_events(runner, "Sensitivity") as fc:
-        base, tab = optimize.sensitivity(cfg, P, events=tuple(events))
+    fc = _Counted(runner, "Sensitivity")
+    base, tab = optimize.sensitivity(cfg, P, runner=fc, events=tuple(events))
     return {"base": {"score": _num(base["score"]), "score_kind": base["score_kind"], "times": _j(base["times"])},
             "table": _table(tab, index=False), "simulations": fc.n, "events": list(events)}
 
 
 def optimise(car, keys, overrides=None, events=("acceleration", "skidpad", "autocross"), span=0.15, maxiter=4, popsize=4, robust=True):
-    """fsae_vd.optimize.optimise (differential evolution) + robustness + recommend on the full car."""
-    from fsae_vd import optimize
+    """lapsim.studies.optimize.optimise (differential evolution) + robustness + recommend on the full car."""
+    from lapsim.studies import optimize
     objs, veh, runner = _car_and_runner(car, overrides)
     cfg = objs["vehicle"]
     P = _params(cfg, keys, float(span))
-    with _full_car_events(runner, "Optimising") as fc:
-        opt = optimize.optimise(cfg, P, events=tuple(events), maxiter=int(maxiter), popsize=int(popsize))
-        rob = optimize.robustness(cfg, opt["best_cfg"], events=tuple(events)) if robust else None
-        table, ev, verdict = optimize.recommend(opt, P, rob)
+    fc = _Counted(runner, "Optimising")
+    opt = optimize.optimise(cfg, P, runner=fc, events=tuple(events), maxiter=int(maxiter), popsize=int(popsize))
+    rob = optimize.robustness(cfg, opt["best_cfg"], runner=fc, events=tuple(events)) if robust else None
+    table, ev, verdict = optimize.recommend(opt, P, rob)
     hist = [h[1] - h[2] for h in opt["history"]]
     best_so_far = list(np.maximum.accumulate(hist)) if hist else []
     return {"parameters": _table(table, index=False), "events": _table(ev.rename_axis("event")), "verdict": [str(v) for v in verdict],
@@ -1604,13 +1591,13 @@ def optimise(car, keys, overrides=None, events=("acceleration", "skidpad", "auto
 
 
 def trackside(car, overrides=None, events=("acceleration", "skidpad", "autocross")):
-    """fsae_vd.adjust.optimise_all_events on the full car: the best reachable setting of the adjustments the car
-    has (springs, anti-roll bar blades, camber shims ...) for each event."""
-    from fsae_vd import adjust
+    """lapsim.studies.adjust.optimise_all_events on the full car: the best reachable setting of the adjustments the
+    car has (springs, anti-roll bar blades, camber shims ...) for each event."""
+    from lapsim.studies import adjust
     objs, veh, runner = _car_and_runner(car, overrides)
     cfg = objs["vehicle"]
-    with _full_car_events(runner, "Trackside adjustment") as fc:
-        r = adjust.optimise_all_events(cfg, events=tuple(events), max_exhaustive=80, restarts=1)
+    fc = _Counted(runner, "Trackside adjustment")
+    r = adjust.optimise_all_events(cfg, runner=fc, events=tuple(events), max_exhaustive=80, restarts=1)
     return {"summary": _table(r["summary"]), "settings": _table(r["settings_by_event"]) if len(r["settings_by_event"]) else None,
             "not_optimised": _table(r["not_optimised"], index=False), "features": [f.name for f in r["features"]], "simulations": fc.n}
 
@@ -1623,21 +1610,15 @@ TRANSIENT_CH = ("t", "s", "x", "y", "v", "ax", "ay", "roll_deg", "pitch_deg", "h
 
 
 def transient(car, overrides=None, events=TRANSIENT_EVENTS, driver_level=0.98):
-    """fsae_vd.multibody.Chassis: the car driven in the time domain (pitch, roll, heave, yaw, tire lag; explicit RK4 at
+    """lapsim.solvers.transient.Chassis: the car driven in the time domain (pitch, roll, heave, yaw, tire lag; explicit RK4 at
     2 ms) along each event's quasi-steady speed profile. Plain numpy, so it runs in the browser; the minimum-lap-time
     multibody solve (CasADi + IPOPT) does not, and comes pre-computed from web/export_mb.py."""
-    from fsae_vd.multibody import Chassis
+    from lapsim.solvers.transient import Chassis
     t_start = time.time()
     car = car.lower()
     events = tuple(e for e in (events or TRANSIENT_EVENTS) if e in EVENTS)
     objs = _load(car, overrides)
-    cfg = objs["vehicle"]
-    if car == "ic":
-        import fsae_pt as pt
-        res = pt.run_events_pt(cfg, objs["pt"], events=events)
-    else:
-        import fsae_ev as ev
-        res = ev.run_events_ev(cfg, objs["ev"], objs["pack"], events=events)
+    res = _run_events(car, objs, events)
     out = {"car": car, "driver_level": _num(driver_level), "events": {}, "notes": []}
     for e in events:
         lr = res.laps.get(e)
