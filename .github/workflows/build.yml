@@ -1,0 +1,37 @@
+# Rebuilds the website's simulation bundle and baseline results when the site itself changes
+# (the page, its scripts, the bridge). Changes to the model on main rebuild it from main's own workflow.
+# GitHub Pages publishes this branch on every commit.
+name: Build site
+on:
+  push:
+    branches: [web/lapsim-site]
+    paths-ignore: ["assets/data/**", "assets/py/lapsim.zip", "docs/**", "README.md"]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: website
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: _main
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install numpy scipy pandas pyyaml
+      - run: python .github/build.py --lapsim _main
+      - name: Commit the rebuilt site
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html assets
+          git diff --cached --quiet && exit 0
+          git commit -m "Rebuild the site from main $(git -C _main rev-parse --short HEAD)"
+          git pull --rebase origin web/lapsim-site
+          git push origin HEAD:web/lapsim-site

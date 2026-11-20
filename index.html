@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000E2F">
+<meta name="description" content="UConn Formula SAE predictive lap simulation: CT-17 IC and CT-17 EV, every subsystem, interactive.">
+<title>UConn FSAE · Predictive Lap Simulation</title>
+<link rel="icon" href="assets/img/favicon.png" type="image/png">
+<link rel="apple-touch-icon" href="assets/img/favicon.png">
+<link rel="stylesheet" href="assets/css/app.css?v=ac0ab80d1a">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <img src="assets/img/logo.png" alt="UConn Formula SAE" class="logo" width="416" height="122">
+    <span class="product">Predictive Lap Simulation</span>
+  </div>
+  <div class="top-controls">
+    <div class="seg" role="tablist" aria-label="Car">
+      <button role="tab" data-car="ic" class="on">CT-17 IC</button>
+      <button role="tab" data-car="ev">CT-17 EV</button>
+    </div>
+    <button id="run" class="btn primary" title="Run the simulation with the current inputs">Run simulation</button>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs" aria-label="Subsystems"></nav>
+
+<div class="statusbar" id="statusbar">
+  <span class="dot" id="dot"></span>
+  <span id="status">Loading baseline…</span>
+  <span class="spacer"></span>
+  <button id="live" class="chip" title="Re-compute this page's curves as you change inputs (starts the in-browser engine)">Live preview</button>
+  <span id="changes" class="changes" hidden></span>
+  <button id="reset" class="btn ghost small" hidden>Reset inputs</button>
+</div>
+
+<main id="main"></main>
+
+<footer class="foot">
+  <span id="buildinfo"></span>
+  <span>Simulation runs in your browser. Nothing you enter leaves this device.</span>
+</footer>
+
+<div class="runbar" id="runbar" hidden>
+  <span id="runbar-text"></span>
+  <button class="btn primary" id="run2">Run simulation</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist-min@2.35.2/plotly.min.js" defer></script>
+<script src="assets/js/app.js?v=ac0ab80d1a" defer></script>
+<script src="assets/js/editors.js?v=ac0ab80d1a" defer></script>
+<script src="assets/js/tunnel.js?v=ac0ab80d1a" defer></script>
+<script src="assets/js/wings.js?v=ac0ab80d1a" defer></script>
+<script src="assets/js/workbench.js?v=ac0ab80d1a" defer></script>
+<script src="assets/js/multibody.js?v=ac0ab80d1a" defer></script>
+</body>
+</html>
